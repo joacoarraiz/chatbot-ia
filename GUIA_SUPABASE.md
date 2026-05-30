@@ -1,118 +1,155 @@
--- =====================================================
--- 04_orders_scoring.sql
--- Pedidos, items de pedido, derivaciones a humano y
--- scoring (puntuación) de cada consulta.
--- Correr DESPUÉS de 03_conversations.sql.
--- =====================================================
+# Guía: setup de Supabase desde cero
 
--- ----- PEDIDO -----
-CREATE TABLE IF NOT EXISTS pedido (
-  id BIGSERIAL PRIMARY KEY,
-  empresa_id BIGINT REFERENCES empresa ON DELETE CASCADE,
-  cliente_id BIGINT REFERENCES cliente,
-  consulta_id BIGINT REFERENCES consulta,
+15 minutos. Si te pasan los 30, algo está raro — avisame.
 
-  numero TEXT,                                  -- "PED-2025-0001", legible para el comercio
-  estado TEXT DEFAULT 'borrador',               -- 'borrador'|'confirmado'|'pagado'|'entregado'|'cancelado'
-  monto_total NUMERIC(12,2),
+## 1. Crear cuenta
 
-  metodo_pago TEXT,                             -- 'efectivo'|'transferencia'|'mp'|'tarjeta'
-  metodo_entrega TEXT,                          -- 'retira'|'envio'|'moto'
-  direccion_envio TEXT,
+1. Ir a https://supabase.com → "Start your project" → "Sign in with GitHub" (lo más simple).
+2. Confirmar el email si te lo pide.
 
-  notas TEXT,
-  creado_at TIMESTAMPTZ DEFAULT now(),
-  confirmado_at TIMESTAMPTZ,
-  entregado_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_pedido_empresa_estado
-  ON pedido(empresa_id, estado);
-CREATE INDEX IF NOT EXISTS idx_pedido_cliente ON pedido(cliente_id);
+## 2. Crear el proyecto
 
--- ----- ITEMS DEL PEDIDO -----
-CREATE TABLE IF NOT EXISTS pedido_item (
-  id BIGSERIAL PRIMARY KEY,
-  pedido_id BIGINT REFERENCES pedido ON DELETE CASCADE,
-  producto_id BIGINT REFERENCES producto_logico,
-  oferta_id BIGINT REFERENCES oferta,           -- de qué fuente se está vendiendo
-  cantidad INT NOT NULL DEFAULT 1,
-  precio_unitario NUMERIC(12,2) NOT NULL,
-  subtotal NUMERIC(12,2) NOT NULL,
-  descuento NUMERIC(12,2) DEFAULT 0,
-  notas TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_item_pedido ON pedido_item(pedido_id);
+1. Dashboard → "New project".
+2. Llenar:
+   - **Name**: `toni-prod` (o `toni-dev` si querés tener dos: uno para desarrollo y otro para producción).
+   - **Database Password**: generá una larga y guardala en un password manager. Si la perdés tenés que resetearla.
+   - **Region**: **South America (São Paulo)**. Es la más cerca de Argentina y baja la latencia.
+   - **Pricing Plan**: Free.
+3. "Create new project". Tarda 1-2 minutos en aprovisionar.
 
--- ----- DERIVACIÓN A HUMANO -----
-CREATE TABLE IF NOT EXISTS derivacion (
-  id BIGSERIAL PRIMARY KEY,
-  conversacion_id BIGINT REFERENCES conversacion,
-  consulta_id BIGINT REFERENCES consulta,
+## 3. Anotar las credenciales
 
-  motivo TEXT NOT NULL,                         -- 'cliente_pidio'|'baja_confianza'|'fuera_alcance'|'fuera_horario'
-  resumen TEXT NOT NULL,                        -- el contexto armado por el agente derivador
-  prioridad TEXT DEFAULT 'normal',              -- 'baja'|'normal'|'alta'
+Una vez creado, en el panel del proyecto:
 
-  asignado_a BIGINT,                            -- user_id del vendedor (cuando exista auth)
-  asignado_at TIMESTAMPTZ,
+1. Sidebar izquierdo → **Settings** (engranaje) → **API**.
+2. Copiar y pegar en tu archivo `.env`:
+   - **Project URL** → `SUPABASE_URL`
+   - **anon public** → `SUPABASE_ANON_KEY`
+   - **service_role secret** → `SUPABASE_SERVICE_ROLE_KEY` ⚠️ Es la clave de admin. **NUNCA** la pongas en el frontend, solo en el backend.
 
-  creado_at TIMESTAMPTZ DEFAULT now(),
-  resuelta_at TIMESTAMPTZ,
-  resolucion TEXT                               -- texto libre de cómo se cerró
-);
-CREATE INDEX IF NOT EXISTS idx_deriv_conv ON derivacion(conversacion_id);
-CREATE INDEX IF NOT EXISTS idx_deriv_asignado ON derivacion(asignado_a, resuelta_at);
+## 4. Correr los SQL en orden
 
--- ----- SCORE DE CONSULTA (★ puntuación) -----
--- Lee la sección 5 del diseño técnico antes de tocar esto.
-CREATE TABLE IF NOT EXISTS score_consulta (
-  id BIGSERIAL PRIMARY KEY,
-  consulta_id BIGINT REFERENCES consulta ON DELETE CASCADE UNIQUE,
+1. Sidebar → ícono `</>` (SQL Editor).
+2. Click "+ New query".
+3. Pegar el contenido completo de `db/01_catalog.sql` → click "Run" (o Ctrl+Enter).
+4. Repetir con cada archivo en orden:
+   - `db/01_catalog.sql`
+   - `db/02_clients.sql`
+   - `db/03_conversations.sql`
+   - `db/04_orders_scoring.sql`
+   - `db/05_rls.sql`
+   - `functions/_rpcs/catalog_rpcs.sql`
 
-  -- Componentes (suman 100)
-  score_resolucion INT,                         -- 0-40 (determinístico)
-  score_datos INT,                              -- 0-20 (determinístico)
-  score_eficiencia INT,                         -- 0-15 (determinístico)
-  score_tono INT,                               -- 0-15 (LLM auditor)
-  score_conversion INT,                         -- 0-10 (determinístico)
-  score_total INT,                              -- 0-100
+Cada uno debería decir "Success. No rows returned." Si alguno tira error, parar y mostrármelo.
 
-  banda TEXT,                                   -- 'mala'|'regular'|'buena'
-  observaciones TEXT,                           -- redactadas por el agente auditor
-  oportunidades_mejora JSONB,                   -- ['falta_catalogo:pastilla_kangoo_diesel', ...]
+## 5. Verificar que se crearon las tablas
 
-  evaluado_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_score_banda ON score_consulta(banda);
-CREATE INDEX IF NOT EXISTS idx_score_total ON score_consulta(score_total);
+1. Sidebar → **Table Editor**.
+2. Deberías ver al menos estas 17 tablas:
+   - `empresa`, `fuente_catalogo`, `producto_logico`, `oferta`, `aplicacion`, `equivalencia`, `regla_precio`
+   - `cliente`, `contact_channel`, `vehiculo_cliente`
+   - `conversacion`, `mensaje`, `consulta`, `intencion_log`
+   - `pedido`, `pedido_item`, `derivacion`, `score_consulta`
 
--- ----- Vista útil: salud del bot por empresa -----
-CREATE OR REPLACE VIEW v_salud_bot_empresa AS
-SELECT
-  e.id AS empresa_id,
-  e.nombre AS empresa,
-  COUNT(s.id) AS consultas_puntuadas,
-  ROUND(AVG(s.score_total), 1) AS score_promedio,
-  COUNT(*) FILTER (WHERE s.banda = 'buena') AS buenas,
-  COUNT(*) FILTER (WHERE s.banda = 'regular') AS regulares,
-  COUNT(*) FILTER (WHERE s.banda = 'mala') AS malas,
-  ROUND(100.0 * COUNT(*) FILTER (WHERE s.banda = 'buena') / NULLIF(COUNT(s.id), 0), 1)
-    AS pct_buenas
-FROM empresa e
-LEFT JOIN consulta c ON c.empresa_id = e.id
-LEFT JOIN score_consulta s ON s.consulta_id = c.id
-WHERE c.iniciada_at >= now() - INTERVAL '30 days'
-GROUP BY e.id;
+## 6. Crear la primera empresa (piloto)
 
--- ----- Vista útil: oportunidades de mejora más frecuentes -----
--- Sirve para que el comercio vea "qué le falta al bot" priorizado.
-CREATE OR REPLACE VIEW v_oportunidades_top AS
-SELECT
-  c.empresa_id,
-  jsonb_array_elements_text(s.oportunidades_mejora) AS oportunidad,
-  COUNT(*) AS frecuencia
-FROM score_consulta s
-JOIN consulta c ON c.id = s.consulta_id
-WHERE s.evaluado_at >= now() - INTERVAL '30 days'
-GROUP BY c.empresa_id, oportunidad
-ORDER BY frecuencia DESC;
+Volvé a SQL Editor:
+
+```sql
+INSERT INTO empresa (
+  nombre,
+  plan,
+  consultas_limite,
+  persona_config,
+  zona_horaria
+) VALUES (
+  'Repuestos Piloto',  -- ← reemplazá por el nombre real cuando lo tengas
+  'basico',
+  1500,
+  '{
+    "tono": "argentino_cercano",
+    "permite_alternativas": true,
+    "horario_atencion": {"lun":"9-18","mar":"9-18","mie":"9-18","jue":"9-18","vie":"9-18","sab":"9-13"},
+    "metodos_pago": ["efectivo","transferencia","mercadopago"],
+    "metodos_entrega": ["retira","envio"]
+  }',
+  'America/Argentina/Buenos_Aires'
+) RETURNING id;
+```
+
+Anotá el `id` que devuelve (probablemente `1`). Ese va a ser el `empresa_id` que usás en todas las pruebas.
+
+## 7. Configurar el bucket de archivos
+
+Para guardar audios e imágenes que mande el cliente:
+
+1. Sidebar → **Storage** → "New bucket".
+2. Nombre: `media`.
+3. Public: **NO** (que quede privado).
+4. "Create bucket".
+
+Listo. El backend va a usar el `service_role_key` para subir y leer archivos de acá.
+
+## 8. Backups
+
+En el plan Free Supabase hace backup automático **diario** y los retiene **7 días**. Para verificar:
+
+1. Sidebar → Settings → Database → Backups.
+
+Cuando pasemos a un plan pago vamos a tener backups más frecuentes (PITR — Point In Time Recovery). Por ahora alcanza.
+
+## 9. Verificar que funciona
+
+Volvé a SQL Editor y probá:
+
+```sql
+SELECT count(*) FROM empresa;
+-- Debería devolver 1
+```
+
+```sql
+SELECT * FROM rpc_consultar_precio(1, 1);
+-- Va a devolver vacío porque no hay productos cargados, pero NO debe tirar error.
+-- Si tira "function does not exist" → te faltó correr functions/_rpcs/catalog_rpcs.sql.
+```
+
+## 10. Habilitar conexión desde tu máquina (opcional, recomendado)
+
+Si querés conectarte desde un cliente SQL (TablePlus, DBeaver, psql):
+
+1. Settings → Database → Connection string. Copiá la URI.
+2. Pegar en tu cliente. La password es la que pusiste al crear el proyecto.
+
+---
+
+## Costos esperados
+
+Con el plan **Free** de Supabase tenés:
+- 500 MB de base.
+- 1 GB de Storage.
+- 5 GB de transferencia/mes.
+- 50 MAU de auth.
+
+Es más que suficiente para 5-10 comercios piloto durante 2-3 meses. Cuando se queda corto, el plan **Pro** son USD 25/mes y multiplica todo por 16. No es el cuello de botella del proyecto.
+
+---
+
+## Si rompiste algo
+
+Para empezar de cero **sin** borrar el proyecto:
+
+```sql
+-- ⚠️ ESTO BORRA TODO. Solo si estás seguro.
+DROP TABLE IF EXISTS score_consulta, derivacion, pedido_item, pedido,
+  intencion_log, mensaje, consulta, conversacion,
+  vehiculo_cliente, contact_channel, cliente,
+  regla_precio, equivalencia, aplicacion, oferta,
+  producto_logico, fuente_catalogo, empresa CASCADE;
+
+DROP FUNCTION IF EXISTS fn_get_or_create_cliente, fn_un_default_por_cliente,
+  fn_cerrar_consultas_inactivas, rpc_buscar_producto,
+  rpc_buscar_por_aplicacion, rpc_buscar_equivalencia,
+  rpc_consultar_precio CASCADE;
+```
+
+Y volvés a correr los SQL desde el 01.
