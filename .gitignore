@@ -1,0 +1,40 @@
+# --- Credenciales (CRÍTICO: nunca subir el .env real) ---
+.env
+.env.local
+.env.*.local
+
+# --- Entornos virtuales de Python ---
+venv/
+env/
+.venv/
+ENV/
+
+# --- Cache de Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Distribuciones ---
+build/
+dist/
+*.egg-info/
+*.egg
+
+# --- VS Code y editores ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Datos sensibles del piloto ---
+# (si en algún momento bajamos un dump local)
+*.csv.local
+catalog_dumps/

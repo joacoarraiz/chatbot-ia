@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "agente": {
+      "type": "string",
+      "enum": ["producto", "cotizacion", "pedido", "faq", "derivacion", "ninguno"],
+      "description": "El agente que debería atender este mensaje. 'ninguno' para saludos/gracias."
+    },
+    "intencion": {
+      "type": "string",
+      "description": "Nombre corto de la intención detectada (ej: buscar_por_aplicacion, consultar_estado_pedido, saludar)."
+    },
+    "confianza": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Qué tan seguro está el router de su clasificación."
+    },
+    "razonamiento": {
+      "type": "string",
+      "description": "Breve explicación de por qué se eligió ese agente."
+    },
+    "datos": {
+      "type": "object",
+      "description": "Datos extraídos del mensaje (marca, modelo, año, código, etc). Estructura libre.",
+      "additionalProperties": true
+    },
+    "cuenta_como_consulta": {
+      "type": "boolean",
+      "description": "True si este mensaje inicia o continúa una consulta facturable. False para saludos sueltos."
+    }
+  },
+  "required": ["agente", "intencion", "confianza", "razonamiento", "datos", "cuenta_como_consulta"],
+  "additionalProperties": false
+}

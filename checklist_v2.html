@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Toni · Checklist v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #faf7f0;
+    --cream-2: #f4ede0;
+    --card: #ffffff;
+    --line: #e8e0cf;
+    --line-2: #d8cdb4;
+    --ink: #2a2620;
+    --steel: #8a8478;
+    --steel-2: #6b6760;
+    --accent: #1d3557;
+    --accent-2: #2c5e84;
+    --green: #4a7c3a;
+    --green-bg: #e8f1de;
+    --amber: #c08833;
+    --amber-bg: #faedd0;
+    --red: #a8423a;
+    --red-bg: #f5e0dc;
+    --disp: 'Cormorant Garamond', Georgia, serif;
+    --body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--body);
+    color: var(--ink);
+    background: var(--cream);
+    line-height: 1.55;
+    min-height: 100vh;
+    padding: 30px 20px;
+    font-size: 14.5px;
+  }
+  .container { max-width: 980px; margin: 0 auto; }
+
+  /* ---------- HEADER ---------- */
+  header {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 22px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  }
+  .h-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; flex-wrap: wrap; }
+  h1 { font-family: var(--disp); font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.5px; }
+  .sub { color: var(--steel); font-size: 14px; margin-top: 4px; }
+  .h-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--body); font-size: 12.5px; font-weight: 500;
+    border: 1px solid var(--line-2); background: var(--cream-2);
+    color: var(--ink); padding: 8px 14px; border-radius: 8px;
+    cursor: pointer; transition: all .15s;
+  }
+  .btn:hover { background: #ebe0c8; border-color: var(--steel); }
+  .btn.danger { color: var(--red); border-color: #e8c5c0; background: #fbf3f1; }
+  .btn.danger:hover { background: var(--red-bg); }
+  .saved { font-size: 12px; color: var(--steel); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+  .saved::before { content: '●'; color: var(--green); font-size: 10px; }
+
+  /* ---------- PROGRESS GLOBAL ---------- */
+  .pgwrap { margin-top: 22px; }
+  .pglabel { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+  .pglabel b { font-weight: 600; }
+  .pgbar { height: 8px; background: var(--cream-2); border-radius: 999px; overflow: hidden; }
+  .pgfill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .4s; }
+
+  /* ---------- INFOBOX ---------- */
+  .infobox {
+    background: linear-gradient(135deg, #fdfbf5 0%, #f8f1de 100%);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin-bottom: 16px;
+    display: flex; gap: 14px;
+  }
+  .infobox-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
+  .infobox h3 { font-family: var(--disp); font-weight: 600; font-size: 17px; margin-bottom: 4px; }
+  .infobox p { font-size: 13px; color: var(--steel-2); line-height: 1.5; }
+  .infobox.warning {
+    background: linear-gradient(135deg, #fff8eb 0%, #faedd0 100%);
+    border-color: #e8c688;
+  }
+  .infobox.warning h3 { color: var(--amber); }
+
+  /* ---------- SECCIÓN ---------- */
+  .section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  }
+  .section.completed { background: #fbfdf8; border-color: #d6e6c8; }
+  .sec-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 24px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid transparent;
+    transition: background .12s;
+  }
+  .sec-head:hover { background: #fcfaf5; }
+  .section.open .sec-head { border-bottom-color: var(--line); }
+  .sec-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--cream-2); color: var(--accent);
+    font-family: var(--disp); font-weight: 700; font-size: 17px;
+    flex-shrink: 0;
+  }
+  .section.completed .sec-num {
+    background: var(--green-bg); color: var(--green);
+  }
+  .sec-title { flex: 1; }
+  .sec-title h2 { font-family: var(--disp); font-weight: 600; font-size: 22px; line-height: 1.2; }
+  .sec-title .desc { font-size: 13px; color: var(--steel); margin-top: 2px; }
+  .sec-meta { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .sec-pct { font-family: var(--disp); font-weight: 600; font-size: 18px; color: var(--accent); min-width: 50px; text-align: right; }
+  .section.completed .sec-pct { color: var(--green); }
+  .sec-chev { color: var(--steel); transition: transform .2s; font-size: 12px; }
+  .section.open .sec-chev { transform: rotate(180deg); }
+
+  .sec-body { display: none; padding: 8px 0 16px; }
+  .section.open .sec-body { display: block; }
+
+  /* ---------- ITEM ---------- */
+  .item {
+    padding: 12px 24px;
+    display: flex; gap: 12px; align-items: flex-start;
+    border-bottom: 1px solid #f5efe2;
+    position: relative;
+  }
+  .item:last-child { border-bottom: none; }
+  .item:hover { background: #fcfaf5; }
+  .item.done { background: #f8faf5; }
+  .item.done:hover { background: #f3f7ed; }
+
+  .cb {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; border: 2px solid var(--line-2);
+    border-radius: 5px; background: #fff; cursor: pointer;
+    flex-shrink: 0; margin-top: 2px;
+    position: relative; transition: all .15s;
+  }
+  .cb:hover { border-color: var(--accent); }
+  .cb:checked {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .cb:checked::after {
+    content: '✓'; color: white;
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 14px; font-weight: 700;
+    line-height: 1;
+  }
+
+  .item-body { flex: 1; min-width: 0; }
+  .item-label {
+    font-size: 14px; line-height: 1.5; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .item.done .item-label > span:first-child {
+    color: var(--steel); text-decoration: line-through; text-decoration-color: var(--line-2);
+  }
+  .item-hint { font-size: 12.5px; color: var(--steel); margin-top: 3px; line-height: 1.4; }
+  .item-hint code {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11.5px;
+    background: var(--cream-2); padding: 1px 6px; border-radius: 4px;
+    color: var(--accent);
+  }
+  .item-hint a { color: var(--accent); text-decoration: underline; text-decoration-color: var(--line-2); }
+  .item-hint a:hover { text-decoration-color: var(--accent); }
+
+  .item-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .pill {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding: 3px 9px; border-radius: 999px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .pill.todo { background: var(--cream-2); color: var(--steel-2); border-color: var(--line-2); }
+  .pill.done { background: var(--green-bg); color: var(--green); border-color: #c8dfb6; }
+  .pill.blocked { background: var(--red-bg); color: var(--red); border-color: #e8c5c0; }
+  .pill.tip { background: #e7eef7; color: var(--accent); border-color: #c9d6e8; }
+  .pill.now { background: var(--amber-bg); color: var(--amber); border-color: #e8c688; }
+
+  .icon-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--steel); font-size: 13px; padding: 4px 6px;
+    border-radius: 4px;
+  }
+  .icon-btn:hover { background: var(--cream-2); color: var(--accent); }
+
+  .note-area {
+    display: none;
+    margin-top: 8px;
+    background: #fbf8f0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .note-area.open { display: block; }
+  .note-area textarea {
+    width: 100%; border: none; background: transparent;
+    resize: vertical; min-height: 50px; outline: none;
+    font-family: var(--body); font-size: 13px; color: var(--ink);
+    line-height: 1.5;
+  }
+  .note-foot { font-size: 11px; color: var(--steel); margin-top: 6px; display: flex; justify-content: space-between; }
+  .done-date { font-size: 11.5px; color: var(--green); font-weight: 500; }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 640px) {
+    body { padding: 16px 12px; }
+    header { padding: 20px; }
+    h1 { font-size: 28px; }
+    .sec-head { padding: 14px 16px; }
+    .item { padding: 10px 16px; }
+    .sec-meta { gap: 8px; }
+    .item-actions { flex-wrap: wrap; }
+  }
+
+  /* ---------- PRINT ---------- */
+  @media print {
+    body { background: white; padding: 0; }
+    header { border: none; box-shadow: none; padding: 0 0 20px; }
+    .h-actions, .icon-btn { display: none; }
+    .section { break-inside: avoid; border-color: #ccc; }
+    .section { display: block !important; }
+    .sec-body { display: block !important; }
+    .note-area { display: block !important; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ============ HEADER ============ -->
+  <header>
+    <div class="h-top">
+      <div>
+        <h1>Toni · Checklist v2</h1>
+        <div class="sub">Estado actualizado al 3 de junio de 2026. Lo hecho aparece pre-tachado. Tu progreso se guarda en este navegador.</div>
+        <div class="saved" id="savedIndicator">Guardado</div>
+      </div>
+      <div class="h-actions">
+        <button class="btn" onclick="expandAll()">Expandir todo</button>
+        <button class="btn" onclick="collapseAll()">Cerrar todo</button>
+        <button class="btn" onclick="exportData()">Exportar progreso</button>
+        <button class="btn danger" onclick="resetAll()">Resetear</button>
+      </div>
+    </div>
+    <div class="pgwrap">
+      <div class="pglabel"><span>Progreso total</span><b id="globalPct">0%</b></div>
+      <div class="pgbar"><div class="pgfill" id="globalFill" style="width:0%"></div></div>
+    </div>
+  </header>
+
+  <div class="infobox warning">
+    <div class="infobox-icon">⏳</div>
+    <div>
+      <h3>Lo más urgente ahora mismo</h3>
+      <p>Iniciar la <b>certificación de Toni como Tech Provider en Meta</b> y completar la <b>importación del catálogo</b>. La certificación tarda hasta 25 días entre verificación de empresa y App Review — cada día que se atrasa es un día menos del calendario de lanzamiento.</p>
+    </div>
+  </div>
+
+  <!-- ============ SECCIONES ============ -->
+  <div id="sections"></div>
+
+</div>
+
+<script>
+// ============ DATA ============
+// preDone:true → arranca tachado (lo que ya hicimos)
+// preDone se respeta solo si el usuario nunca interactuó con el ítem.
+const SECTIONS = [
+  {
+    id: 'diseno',
+    title: 'Diseño técnico',
+    desc: 'Definiciones cerradas en reunión: qué es una consulta, identidad del cliente, base de datos, agentes y scoring.',
+    items: [
+      { id:'d1', label:'Aprobar el diseño técnico Etapa 1', hint:'Documento Diseno_Tecnico_Etapa1.md presentado y aprobado por el equipo.', preDone:true, doneAt:'2026-05-22' },
+      { id:'d2', label:'Definir nombre del producto', hint:'Quedó "Toni". Cualquier cambio implica actualizar persona_config en la base.', preDone:true, doneAt:'2026-05-22' },
+      { id:'d3', label:'Definir qué es una consulta', hint:'Ventana de 30 min, agrupa mensajes de una misma intención. Saludos y gracias no cuentan.', preDone:true, doneAt:'2026-05-22' },
+      { id:'d4', label:'Definir cómo identificamos al cliente recurrente', hint:'Tres tablas: cliente, contact_channel, vehiculo_cliente. Job nocturno calcula etiquetas (recurrente, B2B, dormido).', preDone:true, doneAt:'2026-05-22' },
+      { id:'d5', label:'Definir el esquema completo de base de datos', hint:'17 tablas en 4 bloques: catálogo, clientes, conversaciones, pedidos y scoring.', preDone:true, doneAt:'2026-05-22' },
+      { id:'d6', label:'Definir arquitectura de agentes', hint:'Router + 6 especialistas: Producto, Cotización, Pedido, FAQ, Derivación, Auditor.', preDone:true, doneAt:'2026-05-22' },
+      { id:'d7', label:'Definir sistema de scoring de conversaciones', hint:'5 componentes (4 determinísticos + tono evaluado por LLM auditor).', preDone:true, doneAt:'2026-05-22' },
+    ]
+  },
+  {
+    id: 'github',
+    title: 'Repo en GitHub',
+    desc: 'Repo privado con todos los archivos del proyecto, subido sin Git desde el navegador.',
+    items: [
+      { id:'g1', label:'Crear cuenta de GitHub', hint:'Cuenta personal del responsable.', preDone:true, doneAt:'2026-05-30' },
+      { id:'g2', label:'Crear repo privado chatbot-ia', hint:'En GitHub, repo privado para mantener prompts y arquitectura propios.', preDone:true, doneAt:'2026-05-30' },
+      { id:'g3', label:'Subir archivos del zip al repo', hint:'Arrastrados desde el navegador, sin Git ni token.', preDone:true, doneAt:'2026-05-30' },
+      { id:'g4', label:'Reorganizar archivos en sus subcarpetas', hint:'Los archivos quedaron aplastados en la raíz. Mover db/, agents/, docs/ a sus carpetas correspondientes. Bajo impacto operativo pero conviene ordenarlo antes de que el equipo arranque.', tip:true },
+      { id:'g5', label:'Sumar a Eze, Seba y Fran como colaboradores', hint:'Settings → Collaborators → invitar por usuario de GitHub.' },
+    ]
+  },
+  {
+    id: 'supabase',
+    title: 'Supabase — setup y base de datos',
+    desc: 'Proyecto creado en São Paulo. Tablas y funciones del bot listas.',
+    items: [
+      { id:'s1', label:'Crear cuenta en Supabase', hint:'Sign in con GitHub. franarraiz\'s Org.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s2', label:'Crear proyecto Toni chatbot', hint:'Región South America (São Paulo). Project ID: gtpqmifaoameidbjazbx.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s3', label:'Copiar URL + claves al block de notas', hint:'Project URL, anon key y service_role key. La service_role nunca se comparte por canales públicos.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s4', label:'Invitar al equipo a la organización', hint:'Rol Administrator para Eze, Seba y Fran.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s5', label:'Correr 01_catalog.sql', hint:'Crea empresa, fuente_catalogo, producto_logico, oferta, aplicacion, equivalencia, regla_precio.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s6', label:'Correr 02_clients.sql', hint:'Crea cliente, contact_channel, vehiculo_cliente + función fn_get_or_create_cliente.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s7', label:'Correr 03_conversations.sql', hint:'Crea conversacion, mensaje, consulta, intencion_log + vista v_consultas_mes_actual.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s8', label:'Correr 04_orders_scoring.sql', hint:'Crea pedido, pedido_item, derivacion, score_consulta + vistas de salud del bot.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s9', label:'Correr 05_rls.sql', hint:'Activa Row Level Security en todas las tablas.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s10', label:'Crear bucket "media" en Storage', hint:'Privado. Para audios e imágenes que mande el cliente.', preDone:true, doneAt:'2026-05-30' },
+      { id:'s11', label:'Correr catalog_rpcs.sql (funciones de búsqueda)', hint:'Las 4 funciones rpc_*: buscar_producto, buscar_por_aplicacion, buscar_equivalencia, consultar_precio. Sin esto, el bot no puede consultar. Te pasé el contenido completo en una respuesta del chat.', tip:true },
+      { id:'s12', label:'Crear la primera empresa con INSERT en tabla empresa', hint:'INSERT con nombre, plan=\'basico\', persona_config. Te devuelve un id que vas a usar como empresa_id en todo lo demás.', tip:true },
+      { id:'s13', label:'Verificar que las 4 RPCs existen', hint:'Query de verificación: SELECT proname FROM pg_proc WHERE proname LIKE \'rpc_%\';' },
+    ]
+  },
+  {
+    id: 'catalogo',
+    title: 'Catálogo del piloto',
+    desc: 'Excel real del piloto procesado (3.000 productos). Falta importar los CSV a Supabase.',
+    items: [
+      { id:'c1', label:'Recibir Excel del piloto', hint:'base_datos_Toni.xlsx con 3.000 productos en 35 marcas y 4 categorías.', preDone:true, doneAt:'2026-05-30' },
+      { id:'c2', label:'Auditar y analizar el Excel', hint:'Sin nulos. 75% con marca de auto identificable. 45% con año. 746 productos genéricos sin info de aplicación.', preDone:true, doneAt:'2026-05-30' },
+      { id:'c3', label:'Parsear descripciones → CSVs normalizados', hint:'Script Python que separa marca, modelo, año, motor, posición desde el texto libre.', preDone:true, doneAt:'2026-05-30' },
+      { id:'c4', label:'Generar reporte de huecos para mostrar al piloto', hint:'04_reporte.md con las 3 áreas que el piloto debe completar: precios, productos genéricos, equivalencias OEM.', preDone:true, doneAt:'2026-05-30' },
+      { id:'c5', label:'Correr 00_setup.sql en Supabase', hint:'Inserta la fuente_catalogo id=1 que las ofertas van a referenciar. PRIMER paso de la importación.', tip:true },
+      { id:'c6', label:'Importar 01_productos.csv → tabla producto_logico', hint:'Table Editor → producto_logico → Insert → Import data from CSV. 3.000 filas.' },
+      { id:'c7', label:'Importar 02_ofertas.csv → tabla oferta', hint:'Mismo procedimiento. 3.000 filas. Precio y stock vacíos hasta que el piloto los cargue.' },
+      { id:'c8', label:'Importar 03_aplicaciones.csv → tabla aplicacion', hint:'~2.597 filas (algunos productos quedaron sin aplicación detectable).' },
+      { id:'c9', label:'Correr 05_post_import.sql', hint:'Realinea los sequences. Sin esto, los próximos INSERT pueden chocar.' },
+      { id:'c10', label:'Test final: SELECT con rpc_buscar_por_aplicacion', hint:'SELECT * FROM rpc_buscar_por_aplicacion(1, \'VW\', \'Gol\', 2010, NULL, NULL, NULL, 10); Tiene que devolver productos reales.', tip:true },
+      { id:'c11', label:'Pedir al piloto Excel con precios y stock', hint:'Hoy no tenemos. Sin esto el bot puede recomendar pero no cotizar.' },
+      { id:'c12', label:'Pedir al piloto tabla de equivalencias OEM', hint:'Para que el bot encuentre cuando el cliente busca con código de fábrica.' },
+      { id:'c13', label:'Decidir con el piloto qué hacer con productos genéricos', hint:'746 productos sin marca de auto. Opciones: cargar info faltante, mostrar solo por código, o excluir.' },
+    ]
+  },
+  {
+    id: 'meta',
+    title: 'Certificación en Meta como Tech Provider',
+    desc: 'Lo más bloqueante por tiempo. Tarda hasta 25 días entre verificación de empresa y App Review.',
+    items: [
+      { id:'m1', label:'Decidir bajo qué empresa se certifica Toni', hint:'¿La empresa donde trabajan ustedes? ¿Una nueva específica para Toni? ¿Monotributo personal? Decisión muy difícil de cambiar después.', tip:true },
+      { id:'m2', label:'Reunir documentación legal de la empresa', hint:'CUIT (constancia de AFIP), factura de servicios reciente, razón social, dirección legal exacta.' },
+      { id:'m3', label:'Publicar sitio web de Toni con URL pública', hint:'Aunque sea una landing simple. Meta lo exige y entra a verificar que cargue.' },
+      { id:'m4', label:'Activar 2FA en la cuenta personal de Facebook del responsable', hint:'Sin esto Meta bloquea el proceso a mitad de camino.' },
+      { id:'m5', label:'Etapa 1: Crear cuenta de desarrollador en Meta', hint:'developers.facebook.com → Get Started → tipo Business. 10 min.' },
+      { id:'m6', label:'Etapa 2: Crear app Toni con WhatsApp en Sandbox', hint:'My Apps → Create App → tipo Business → agregar producto WhatsApp. Da un número de prueba gratis.' },
+      { id:'m7', label:'Etapa 2: Anotar phone_number_id, WABA_id y access_token de prueba', hint:'Son las credenciales que el equipo técnico necesita para conectar el bot.' },
+      { id:'m8', label:'Etapa 3: Cargar info del negocio en Business Manager', hint:'Configuración del negocio → Información del negocio. Todos los campos exactos a AFIP.' },
+      { id:'m9', label:'Etapa 3: Iniciar verificación de empresa', hint:'Centro de seguridad → Iniciar verificación. Subir CUIT y factura. ⚠️ tarda 5-10 días hábiles.', tip:true },
+      { id:'m10', label:'Etapa 3: Verificación de empresa APROBADA', hint:'Llega un mail de Meta. Si piden info adicional, responder en menos de 5 días o el trámite vuelve al final de la cola.' },
+      { id:'m11', label:'Preparar política de privacidad publicada', hint:'URL pública en el sitio. Qué datos guardamos, por cuánto tiempo, con quién compartimos.' },
+      { id:'m12', label:'Preparar términos y condiciones de uso', hint:'También en URL pública.' },
+      { id:'m13', label:'Grabar video screencast del producto (3-5 min)', hint:'Flujo completo: comercio se conecta a Toni → cliente final manda mensaje → bot responde. Voz en off explicando.' },
+      { id:'m14', label:'Etapa 4: Solicitar App Review', hint:'App Review en developers.facebook.com. Pedir permisos: whatsapp_business_management, whatsapp_business_messaging, business_management.' },
+      { id:'m15', label:'Etapa 4: App Review APROBADA', hint:'5-15 días hábiles. Es normal pasar por una o dos rondas de feedback.' },
+    ]
+  },
+  {
+    id: 'llm',
+    title: 'Cuentas LLM y STT',
+    desc: 'Decidimos arrancar con OpenAI (una sola cuenta cubre Whisper también).',
+    items: [
+      { id:'l1', label:'Comparar opciones de proveedor LLM', hint:'OpenAI vs Anthropic. Excel comparativo generado con precios actualizados y simulador de costos.', preDone:true, doneAt:'2026-06-01' },
+      { id:'l2', label:'Decidir proveedor LLM', hint:'Quedó OpenAI para arrancar: una sola cuenta cubre LLM + Whisper.', preDone:true, doneAt:'2026-06-01' },
+      { id:'l3', label:'Decidir modelo para router', hint:'GPT-4.1 Mini ($0.40 input / $1.60 output por millón de tokens).', preDone:true, doneAt:'2026-06-01' },
+      { id:'l4', label:'Decidir modelo para especialistas', hint:'GPT-4.1 ($5 input / $15 output). Eventualmente migrar a Claude Sonnet 4.6 si el español no convence.', preDone:true, doneAt:'2026-06-01' },
+      { id:'l5', label:'Decidir modelo para transcripción de audios', hint:'GPT-4o Mini Transcribe ($0.003/min).', preDone:true, doneAt:'2026-06-01' },
+      { id:'l6', label:'Crear cuenta en OpenAI', hint:'platform.openai.com. A veces dan crédito inicial gratis.' },
+      { id:'l7', label:'Generar API key', hint:'API Keys → Create new secret key. Anotar (se muestra una sola vez).' },
+      { id:'l8', label:'Cargar saldo inicial', hint:'USD 5-10 alcanza para arrancar con las primeras pruebas.' },
+      { id:'l9', label:'Configurar tope de gasto mensual', hint:'Settings → Limits. Hard limit en USD 100 para no asustarse si algo se va de mambo.' },
+    ]
+  },
+  {
+    id: 'env',
+    title: 'Archivo .env (credenciales)',
+    desc: 'El archivo local con todas las claves. Nunca se sube al repo.',
+    items: [
+      { id:'e1', label:'Copiar .env.example a .env en la carpeta del proyecto', hint:'En Mac/Linux: cp .env.example .env. En Windows: click derecho → copiar y renombrar.' },
+      { id:'e2', label:'Completar credenciales de Supabase', hint:'SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.' },
+      { id:'e3', label:'Completar OPENAI_API_KEY', hint:'La que generaste en el paso L7.' },
+      { id:'e4', label:'Completar credenciales de WhatsApp', hint:'WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN, WHATSAPP_VERIFY_TOKEN. Sale después de la Etapa 2 de Meta.' },
+      { id:'e5', label:'Verificar que el .env NO está en GitHub', hint:'Buscar en el repo. Si está, hay que rotar TODAS las claves urgente.', tip:true },
+    ]
+  },
+  {
+    id: 'bot-min',
+    title: 'Bot funcionando — versión mínima',
+    desc: 'El núcleo: que un mensaje entre por WhatsApp y el bot busque en el catálogo y responda.',
+    items: [
+      { id:'b1', label:'Refactorear el router a OpenAI SDK', hint:'El código del router está hecho con Anthropic SDK. Adaptarlo a OpenAI es trivial — 5 min.' },
+      { id:'b2', label:'Setear webhook de WhatsApp', hint:'Apuntar el webhook de Meta al endpoint del backend.' },
+      { id:'b3', label:'Endpoint POST /webhook que valide firma', hint:'Meta firma cada request con HMAC. Si no validás, cualquiera puede mandar mensajes falsos.' },
+      { id:'b4', label:'Guardar cada mensaje en tabla mensaje', hint:'Antes de cualquier procesamiento. Si algo falla, queda el log.' },
+      { id:'b5', label:'Crear/obtener cliente con fn_get_or_create_cliente', hint:'Función ya creada en 02_clients.sql.' },
+      { id:'b6', label:'Abrir/continuar conversación', hint:'Si la última está abierta y reciente (<30 min), seguir. Si no, abrir nueva.' },
+      { id:'b7', label:'Implementar Agente Router', hint:'Clasificador. GPT-4.1 Mini. Prompt en agents/router/prompt.md.' },
+      { id:'b8', label:'Implementar tool buscar_producto', hint:'Llama a rpc_buscar_producto en Postgres.' },
+      { id:'b9', label:'Implementar tool consultar_stock', hint:'Por producto_id → suma de stock por fuente.' },
+      { id:'b10', label:'Implementar tool consultar_precio', hint:'Aplica regla_precio para devolver el precio recomendado.' },
+      { id:'b11', label:'Implementar tool buscar_equivalencia', hint:'Por código externo → producto match.' },
+      { id:'b12', label:'Implementar tool buscar_por_aplicacion', hint:'Por marca + modelo + año → productos compatibles.' },
+      { id:'b13', label:'Implementar Agente Producto', hint:'Prompt en agents/producto/prompt.md. Conectado a sus 5 tools.' },
+      { id:'b14', label:'Loop: respuesta del bot → enviar a WhatsApp Cloud API', hint:'POST a Meta con el texto. Guardar wamid en mensaje.whatsapp_msg_id.' },
+      { id:'b15', label:'Probar end-to-end con número sandbox de Meta', hint:'Mandar "hola", "pastillas Gol 1.6 2010", verificar que responde con datos reales del catálogo cargado.' },
+    ]
+  },
+  {
+    id: 'agentes',
+    title: 'Resto de agentes especializados',
+    desc: 'Una vez que Producto anda, sumamos los demás. Pueden ir en paralelo entre devs.',
+    items: [
+      { id:'a1', label:'Agente Cotización + tool armar_pedido', hint:'Cierra ventas. Crea registro en pedido y pedido_item.' },
+      { id:'a2', label:'Agente Pedido + tool consultar_pedido', hint:'"¿llegó mi pedido?", "¿cuándo está listo?".' },
+      { id:'a3', label:'Agente FAQ + tool consultar_info_empresa', hint:'Horarios, ubicación, métodos de pago.' },
+      { id:'a4', label:'Agente Derivación + tool derivar_humano', hint:'Crea registro en derivacion con resumen del contexto. Resumen es crítico para el vendedor.', tip:true },
+      { id:'a5', label:'Agente Auditor — script de scoring nocturno', hint:'Componentes 1, 2, 3 y 5 son determinísticos. Solo el de tono usa LLM.' },
+      { id:'a6', label:'Cron job de cierre por inactividad', hint:'Cada 5 min, llama fn_cerrar_consultas_inactivas() ya creada.' },
+      { id:'a7', label:'Cron job de recálculo de etiquetas de cliente', hint:'1 vez por día. Recalcula recurrente, candidato_b2b, dormido, frio.' },
+    ]
+  },
+  {
+    id: 'multimodal',
+    title: 'Audio (Etapa 1 cierra acá)',
+    desc: 'Audio es clave en Argentina. Foto e imagen quedan para Etapa 2.',
+    items: [
+      { id:'mm1', label:'Detectar audio en webhook entrante', hint:'WhatsApp manda type: audio con un media_id. Hay que bajar el archivo.' },
+      { id:'mm2', label:'Descargar audio y guardar en Storage', hint:'Bucket "media" de Supabase.' },
+      { id:'mm3', label:'Llamar a GPT-4o Mini Transcribe con el audio', hint:'Pasar el archivo, recibir transcripción en español.' },
+      { id:'mm4', label:'Guardar transcripción en mensaje.contenido', hint:'Y la URL del audio original en media_url.' },
+      { id:'mm5', label:'Manejar fallas de transcripción', hint:'Si falla: "no pude escuchar el audio, ¿podés escribirlo?"' },
+    ]
+  },
+  {
+    id: 'dashboard',
+    title: 'Dashboard y CRM',
+    desc: 'El front que ven los comercios y ustedes (los dueños del producto).',
+    items: [
+      { id:'p1', label:'Auth de Supabase para los comercios', hint:'Email + password. Cada uno solo ve sus datos (RLS).' },
+      { id:'p2', label:'Vista CRM con lista de clientes', hint:'Buscador + filtro por estado.' },
+      { id:'p3', label:'Ficha del cliente con historial', hint:'Drawer con timeline de mensajes, vehículos, pedidos.' },
+      { id:'p4', label:'Bandeja de derivaciones', hint:'Ordenada por valor cotizado × (100 - score_bot).' },
+      { id:'p5', label:'Dashboard del comercio', hint:'Las 4 métricas: consultas usadas / plan, salud del bot, embudo, top productos.' },
+      { id:'p6', label:'Vista "preguntas que el bot no supo"', hint:'Saca de score_consulta.oportunidades_mejora.' },
+      { id:'p7', label:'Dashboard de ustedes (dueños del producto)', hint:'Comercios activos, MRR, costo IA / consulta agregado, riesgos de churn.' },
+      { id:'p8', label:'Configuración: persona / tono del bot', hint:'Edita empresa.persona_config. Live preview ideal.' },
+      { id:'p9', label:'Configuración: fuentes de catálogo', hint:'Subir Excel, configurar Drive, gestionar el mapeo.' },
+    ]
+  },
+  {
+    id: 'piloto',
+    title: 'Lanzamiento del piloto',
+    desc: 'De staging a producción con el primer comercio real (cuando Meta apruebe).',
+    items: [
+      { id:'pi1', label:'Decidir hosting del backend', hint:'Railway, Cloud Run, Render, Fly.io. Recomiendo Railway para empezar.' },
+      { id:'pi2', label:'Setup en producción (servidor + dominio + HTTPS)', hint:'HTTPS obligatorio para webhook de Meta.' },
+      { id:'pi3', label:'Apuntar webhook de producción en Meta', hint:'Reemplazar el de sandbox.' },
+      { id:'pi4', label:'Conectar el primer comercio piloto vía Embedded Signup', hint:'El comercio inicia sesión con su Facebook y autoriza a Toni en pocos clics.' },
+      { id:'pi5', label:'Pruebas internas (todo el equipo manda mensajes)', hint:'Mínimo 50 conversaciones simuladas. Revisar puntajes bajos.' },
+      { id:'pi6', label:'Capacitar al operador humano del piloto', hint:'Cómo usar la bandeja, cuándo retomar, cómo dar feedback al equipo técnico.' },
+      { id:'pi7', label:'Día 1: lanzamiento — anuncio a clientes del piloto', hint:'WhatsApp en cartelería del local, en redes, en el sitio.' },
+      { id:'pi8', label:'Monitoreo intensivo primera semana', hint:'Logs, errores, score promedio.' },
+      { id:'pi9', label:'Revisión semanal con el piloto', hint:'¿Qué le sirve? ¿Qué falta?' },
+      { id:'pi10', label:'Métricas a las 2 semanas', hint:'Tasa de respuesta, leads, conversiones, % auto-resueltas, costo IA real.' },
+    ]
+  }
+];
+
+// ============ STATE ============
+const STORAGE_KEY = 'toni-checklist-v2';
+let state = loadState();
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) { return {}; }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    flashSaved();
+  } catch (e) {
+    console.error('No pude guardar', e);
+  }
+}
+
+function flashSaved() {
+  const el = document.getElementById('savedIndicator');
+  el.textContent = 'Guardando…';
+  setTimeout(() => {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2,'0');
+    const m = String(now.getMinutes()).padStart(2,'0');
+    el.textContent = `Guardado a las ${h}:${m}`;
+  }, 200);
+}
+
+// Busca un item en el SECTIONS por id
+function findItemDef(itemId) {
+  for (const sec of SECTIONS) {
+    for (const it of sec.items) {
+      if (it.id === itemId) return it;
+    }
+  }
+  return null;
+}
+
+function getItem(itemId) {
+  // Si el usuario ya interactuó, respetá su estado
+  if (state[itemId]) return state[itemId];
+  // Si no, mirá el preDone del item
+  const def = findItemDef(itemId);
+  if (def && def.preDone) {
+    return { done: true, note: '', doneAt: def.doneAt ? new Date(def.doneAt).toISOString() : null };
+  }
+  return { done: false, note: '', doneAt: null };
+}
+
+function setItem(itemId, patch) {
+  const current = getItem(itemId);
+  state[itemId] = { ...current, ...patch };
+  saveState();
+  renderProgress();
+}
+
+// ============ RENDER ============
+function render() {
+  const container = document.getElementById('sections');
+  container.innerHTML = SECTIONS.map((sec, idx) => {
+    const open = state['__sec_open__' + sec.id] !== false;
+    const allDone = sec.items.every(it => getItem(it.id).done);
+    return `
+      <div class="section ${open ? 'open' : ''} ${allDone ? 'completed' : ''}" data-sec="${sec.id}">
+        <div class="sec-head" onclick="toggleSection('${sec.id}')">
+          <div class="sec-num">${idx + 1}</div>
+          <div class="sec-title">
+            <h2>${sec.title}</h2>
+            <div class="desc">${sec.desc}</div>
+          </div>
+          <div class="sec-meta">
+            <div class="sec-pct" id="pct-${sec.id}">0%</div>
+            <div class="sec-chev">▼</div>
+          </div>
+        </div>
+        <div class="sec-body">
+          ${sec.items.map(it => renderItem(it)).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+  renderProgress();
+}
+
+function renderItem(it) {
+  const st = getItem(it.id);
+  return `
+    <div class="item ${st.done ? 'done' : ''}" data-item="${it.id}">
+      <input type="checkbox" class="cb" ${st.done ? 'checked' : ''} onchange="toggleDone('${it.id}', this.checked)">
+      <div class="item-body">
+        <label class="item-label" onclick="this.parentNode.previousElementSibling.click()">
+          <span>${it.label}</span>
+          ${it.tip ? '<span class="pill tip">Crítico</span>' : ''}
+        </label>
+        ${it.hint ? `<div class="item-hint">${it.hint}</div>` : ''}
+        <div class="note-area ${st.note ? 'open' : ''}" id="note-${it.id}">
+          <textarea
+            placeholder="Notas, dudas, links…"
+            oninput="updateNote('${it.id}', this.value)"
+          >${escapeHtml(st.note || '')}</textarea>
+          <div class="note-foot">
+            <span>Las notas se guardan acá nomás.</span>
+            ${st.doneAt ? `<span class="done-date">Hecho: ${formatDate(st.doneAt)}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="item-actions">
+        <span class="pill ${st.done ? 'done' : 'todo'}">${st.done ? 'Hecho' : 'Pendiente'}</span>
+        <button class="icon-btn" onclick="toggleNote('${it.id}')" title="Notas">📝</button>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function renderProgress() {
+  let totalItems = 0, totalDone = 0;
+  SECTIONS.forEach(sec => {
+    let done = 0;
+    sec.items.forEach(it => {
+      totalItems++;
+      if (getItem(it.id).done) { done++; totalDone++; }
+    });
+    const pct = sec.items.length ? Math.round(100 * done / sec.items.length) : 0;
+    const el = document.getElementById(`pct-${sec.id}`);
+    if (el) el.textContent = `${pct}%`;
+    // Refrescar clase completed
+    const secEl = document.querySelector(`[data-sec="${sec.id}"]`);
+    if (secEl) {
+      if (done === sec.items.length) secEl.classList.add('completed');
+      else secEl.classList.remove('completed');
+    }
+  });
+  const globalPct = totalItems ? Math.round(100 * totalDone / totalItems) : 0;
+  document.getElementById('globalPct').textContent = `${globalPct}% (${totalDone}/${totalItems})`;
+  document.getElementById('globalFill').style.width = `${globalPct}%`;
+}
+
+// ============ ACTIONS ============
+function toggleDone(itemId, done) {
+  const patch = done
+    ? { done: true, doneAt: new Date().toISOString() }
+    : { done: false, doneAt: null };
+  setItem(itemId, patch);
+  const itemEl = document.querySelector(`[data-item="${itemId}"]`);
+  if (itemEl) {
+    itemEl.classList.toggle('done', done);
+    const pill = itemEl.querySelector('.item-actions .pill');
+    if (pill && !pill.classList.contains('tip')) {
+      pill.className = 'pill ' + (done ? 'done' : 'todo');
+      pill.textContent = done ? 'Hecho' : 'Pendiente';
+    }
+    const note = itemEl.querySelector('.note-foot');
+    if (note) {
+      const st = getItem(itemId);
+      let dd = note.querySelector('.done-date');
+      if (st.doneAt) {
+        if (!dd) {
+          dd = document.createElement('span');
+          dd.className = 'done-date';
+          note.appendChild(dd);
+        }
+        dd.textContent = `Hecho: ${formatDate(st.doneAt)}`;
+      } else if (dd) {
+        dd.remove();
+      }
+    }
+  }
+}
+
+function toggleNote(itemId) {
+  const el = document.getElementById('note-' + itemId);
+  if (el) el.classList.toggle('open');
+}
+
+function updateNote(itemId, value) {
+  setItem(itemId, { note: value });
+}
+
+function toggleSection(secId) {
+  const el = document.querySelector(`[data-sec="${secId}"]`);
+  const isOpen = el.classList.toggle('open');
+  state['__sec_open__' + secId] = isOpen;
+  saveState();
+}
+
+function expandAll() {
+  document.querySelectorAll('.section').forEach(s => {
+    s.classList.add('open');
+    state['__sec_open__' + s.dataset.sec] = true;
+  });
+  saveState();
+}
+
+function collapseAll() {
+  document.querySelectorAll('.section').forEach(s => {
+    s.classList.remove('open');
+    state['__sec_open__' + s.dataset.sec] = false;
+  });
+  saveState();
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `toni-checklist-v2-${now}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function resetAll() {
+  if (!confirm('¿Borrar TODO el progreso? No se puede deshacer.')) return;
+  state = {};
+  localStorage.removeItem(STORAGE_KEY);
+  render();
+}
+
+// ============ INIT ============
+render();
+</script>
+</body>
+</html>
