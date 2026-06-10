@@ -58,7 +58,7 @@ def clasificar(
             "json_schema": {
                 "name": "router_output",
                 "schema": _SCHEMA,
-                "strict": True,
+                "strict": False,
             },
         },
         temperature=0.2,
