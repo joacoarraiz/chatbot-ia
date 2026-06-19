@@ -38,3 +38,4 @@ logs/
 # (si en algún momento bajamos un dump local)
 *.csv.local
 catalog_dumps/
+ngrok.exe 
