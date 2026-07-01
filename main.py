@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
+import inspect
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -134,6 +135,37 @@ async def recibir_webhook(request: Request):
     # 6. Siempre responder 200 a Meta (sino reintenta)
     return Response(content="OK", status_code=200)
 
+# ============ HISTORIAL CONVERSACIONAL ============
+def get_historial_para_agente(conversacion_id, limite=10, excluir_wamid=None):
+    """
+    Lee los ultimos mensajes de una conversacion y los formatea
+    como OpenAI los espera: [{"role": "user"/"assistant", "content": ...}].
+    Traduce: emisor 'bot' -> 'assistant', emisor 'cliente' -> 'user'.
+    Excluye el mensaje actual (que se pasa aparte como mensaje_cliente).
+    """
+    sb = get_client()
+    msgs = (
+        sb.table("mensaje")
+        .select("emisor, contenido, whatsapp_msg_id, creado_at")
+        .eq("conversacion_id", conversacion_id)
+        .order("creado_at", desc=False)   # cronologico: viejo -> nuevo
+        .limit(limite)
+        .execute()
+        .data or []
+    )
+
+    historial = []
+    for m in msgs:
+        # No incluir el mensaje actual (ya se pasa como mensaje_cliente)
+        if excluir_wamid and m.get("whatsapp_msg_id") == excluir_wamid:
+            continue
+        contenido = m.get("contenido")
+        if not contenido:
+            continue
+        rol = "assistant" if m.get("emisor") == "bot" else "user"
+        historial.append({"role": rol, "content": contenido})
+
+    return historial
 
 # ============ LOGICA DE PROCESAMIENTO ============
 async def procesar_mensaje(mensaje: dict):
@@ -176,7 +208,7 @@ async def procesar_mensaje(mensaje: dict):
             "p_empresa_id": EMPRESA_ID,
             "p_canal": "whatsapp",
             "p_identificador": numero,
-            "p_nombre": nombre,
+            "p_display_name": nombre,
         }).execute()
         cliente_id = cliente_resp.data
     except Exception as e:
@@ -225,8 +257,17 @@ async def procesar_mensaje(mensaje: dict):
         "whatsapp_msg_id": mensaje.get("wamid"),
     }).execute()
 
-    # ===== Pasar al router =====
-    clasificacion = clasificar(texto, contexto={"canal": "whatsapp"})
+    # ===== Leer historial de la conversacion (memoria) =====
+    historial = get_historial_para_agente(
+        conversacion_id,
+        limite=10,
+        excluir_wamid=mensaje.get("wamid"),
+    )
+    if historial:
+        print(f"[MEMORIA] {len(historial)} mensaje(s) de contexto cargados.")
+
+    # ===== Pasar al router (con memoria) =====
+    clasificacion = clasificar(texto, contexto={"canal": "whatsapp"}, historial=historial)
     agente_elegido = clasificacion["agente"]
     print(f"[ROUTER] Agente: {agente_elegido}")
 
@@ -235,11 +276,19 @@ async def procesar_mensaje(mensaje: dict):
         respuesta_texto = "Hola! Soy Toni. En que te puedo ayudar con repuestos?"
     else:
         try:
-            resultado = AGENTES[agente_elegido](
-                mensaje_cliente=texto,
-                contexto={"canal": "whatsapp", "cliente_id": cliente_id},
-                verbose=False,
-            )
+            agente_fn = AGENTES[agente_elegido]
+            # Armar los argumentos base
+            kwargs = {
+                "mensaje_cliente": texto,
+                "contexto": {"canal": "whatsapp", "cliente_id": cliente_id},
+                "verbose": False,
+            }
+            # Solo pasar 'historial' si el agente lo acepta (asi no rompemos los que no lo tienen)
+            params_del_agente = inspect.signature(agente_fn).parameters
+            if "historial" in params_del_agente:
+                kwargs["historial"] = historial
+
+            resultado = agente_fn(**kwargs)
             respuesta_texto = resultado["respuesta_texto"]
         except Exception as e:
             print(f"[ERROR] Agente {agente_elegido}: {e}")

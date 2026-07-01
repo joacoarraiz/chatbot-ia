@@ -1,7 +1,7 @@
 """
 functions/whatsapp.py
 Funciones para interactuar con WhatsApp Cloud API:
-  - enviar_mensaje: manda un texto a un numero.
+  - enviar_mensaje: manda un texto a un numero (normaliza numeros argentinos).
   - validar_firma: verifica que un request viene realmente de Meta (HMAC).
   - parsear_mensaje_entrante: extrae los datos de un webhook de Meta.
 """
@@ -32,18 +32,39 @@ def _access_token() -> str:
     return token
 
 
+# ============ NORMALIZAR NUMERO ARGENTINO ============
+def normalizar_numero(numero: str) -> str:
+    """
+    WhatsApp a veces manda los numeros argentinos con un '9' extra
+    despues del codigo de pais (549...) pero la API de envio los espera
+    SIN ese 9 (54...). Esta funcion lo corrige.
+
+    Ejemplo: 5492235984575 -> 542235984575
+
+    Solo afecta numeros argentinos (que empiezan con 549). El resto
+    se devuelve tal cual.
+    """
+    numero = numero.strip().replace("+", "").replace(" ", "").replace("-", "")
+
+    # Si es argentino con el 9 extra: 549 + area + numero
+    if numero.startswith("549"):
+        # Sacar el 9 que va despues del 54
+        numero = "54" + numero[3:]
+
+    return numero
+
+
 # ============ ENVIAR MENSAJE ============
 def enviar_mensaje(numero_destino: str, texto: str) -> dict:
     """
     Envia un mensaje de texto por WhatsApp Cloud API.
-
-    Args:
-        numero_destino: numero del destinatario (formato internacional sin +, ej "5491128583204").
-        texto: el mensaje a enviar.
-
-    Returns:
-        dict con la respuesta de Meta (incluye el wamid del mensaje enviado).
+    Normaliza el numero argentino antes de enviar.
+    Si Meta rechaza el envio, imprime el detalle EXACTO.
     """
+    numero_normalizado = normalizar_numero(numero_destino)
+    if numero_normalizado != numero_destino:
+        print(f"[NUM] Numero normalizado: {numero_destino} -> {numero_normalizado}")
+
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/messages"
     headers = {
         "Authorization": f"Bearer {_access_token()}",
@@ -52,17 +73,31 @@ def enviar_mensaje(numero_destino: str, texto: str) -> dict:
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
-        "to": numero_destino,
+        "to": numero_normalizado,
         "type": "text",
         "text": {"body": texto},
     }
 
     with httpx.Client(timeout=30.0) as client:
         resp = client.post(url, headers=headers, json=payload)
+
+        if resp.status_code >= 400:
+            print("=" * 60)
+            print(f"[ERROR WhatsApp] Meta rechazo el envio a: {numero_normalizado}")
+            print(f"[ERROR WhatsApp] HTTP status: {resp.status_code}")
+            try:
+                error_data = resp.json()
+                err = error_data.get("error", {})
+                print(f"[ERROR WhatsApp] code:     {err.get('code')}")
+                print(f"[ERROR WhatsApp] message:  {err.get('message')}")
+                print(f"[ERROR WhatsApp] details:  {err.get('error_data', {}).get('details')}")
+            except Exception:
+                print(f"[ERROR WhatsApp] Respuesta cruda: {resp.text}")
+            print("=" * 60)
+
         resp.raise_for_status()
         data = resp.json()
 
-    # Extraer el wamid (id del mensaje en WhatsApp)
     wamid = None
     try:
         wamid = data["messages"][0]["id"]
@@ -76,18 +111,9 @@ def enviar_mensaje(numero_destino: str, texto: str) -> dict:
 def validar_firma(payload_bytes: bytes, firma_header: Optional[str]) -> bool:
     """
     Valida que el request viene realmente de Meta usando HMAC SHA256.
-
-    Args:
-        payload_bytes: el body crudo del request (en bytes).
-        firma_header: el valor del header X-Hub-Signature-256 (ej "sha256=abc123...").
-
-    Returns:
-        True si la firma es valida, False si no.
     """
     app_secret = os.environ.get("WHATSAPP_APP_SECRET")
     if not app_secret:
-        # Si no hay app_secret configurado, modo desarrollo: no validamos.
-        # ADVERTENCIA: en produccion esto SIEMPRE debe estar configurado.
         print("[WARN] WHATSAPP_APP_SECRET no configurado. Saltando validacion HMAC (modo dev).")
         return True
 
@@ -95,7 +121,6 @@ def validar_firma(payload_bytes: bytes, firma_header: Optional[str]) -> bool:
         print("[WARN] Request sin header de firma.")
         return False
 
-    # El header viene como "sha256=<hash>"
     try:
         metodo, firma_recibida = firma_header.split("=", 1)
     except ValueError:
@@ -104,14 +129,12 @@ def validar_firma(payload_bytes: bytes, firma_header: Optional[str]) -> bool:
     if metodo != "sha256":
         return False
 
-    # Calcular el HMAC esperado
     firma_esperada = hmac.new(
         key=app_secret.encode("utf-8"),
         msg=payload_bytes,
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    # Comparacion segura contra timing attacks
     return hmac.compare_digest(firma_recibida, firma_esperada)
 
 
@@ -119,17 +142,12 @@ def validar_firma(payload_bytes: bytes, firma_header: Optional[str]) -> bool:
 def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
     """
     Extrae los datos relevantes de un webhook de WhatsApp.
-
-    Returns:
-        dict con { numero, nombre, texto, wamid, tipo, media_id } o None si
-        no es un mensaje de texto/audio procesable (ej: es un status update).
     """
     try:
         entry = body["entry"][0]
         change = entry["changes"][0]
         value = change["value"]
 
-        # Los status updates (entregado, leido) no son mensajes
         if "messages" not in value:
             return None
 
@@ -138,7 +156,6 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
         wamid = mensaje["id"]
         tipo = mensaje["type"]
 
-        # Nombre del contacto (si viene)
         nombre = None
         if "contacts" in value and value["contacts"]:
             nombre = value["contacts"][0].get("profile", {}).get("name")
@@ -156,7 +173,6 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
             resultado["texto"] = mensaje["text"]["body"]
         elif tipo == "audio":
             resultado["media_id"] = mensaje["audio"]["id"]
-        # otros tipos (image, video, etc.) los ignoramos por ahora
 
         return resultado
 

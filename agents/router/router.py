@@ -28,6 +28,7 @@ def get_openai_client() -> OpenAI:
 def clasificar(
     mensaje: str,
     contexto: dict | None = None,
+    historial: list | None = None,
 ) -> dict:
     """
     Clasifica un mensaje y devuelve la intención + el agente que debería tomarlo.
@@ -47,12 +48,16 @@ def clasificar(
     if contexto:
         contexto_txt = f"\n\nContexto del cliente:\n{json.dumps(contexto, ensure_ascii=False, indent=2)}"
 
+    mensajes_llm = [{"role": "system", "content": _PROMPT}]
+    if historial:
+        mensajes_llm.extend(historial)
+    mensajes_llm.append(
+        {"role": "user", "content": f"Mensaje del cliente:\n{mensaje}{contexto_txt}"}
+    )
+
     response = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": _PROMPT},
-            {"role": "user", "content": f"Mensaje del cliente:\n{mensaje}{contexto_txt}"},
-        ],
+        messages=mensajes_llm,
         response_format={
             "type": "json_schema",
             "json_schema": {
