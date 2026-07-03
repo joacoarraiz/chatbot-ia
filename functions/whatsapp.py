@@ -2,6 +2,7 @@
 functions/whatsapp.py
 Funciones para interactuar con WhatsApp Cloud API:
   - enviar_mensaje: manda un texto a un numero (normaliza numeros argentinos).
+  - enviar_plantilla: manda una plantilla aprobada (para avisos fuera de la ventana de 24hs).
   - validar_firma: verifica que un request viene realmente de Meta (HMAC).
   - parsear_mensaje_entrante: extrae los datos de un webhook de Meta.
 """
@@ -84,6 +85,92 @@ def enviar_mensaje(numero_destino: str, texto: str) -> dict:
         if resp.status_code >= 400:
             print("=" * 60)
             print(f"[ERROR WhatsApp] Meta rechazo el envio a: {numero_normalizado}")
+            print(f"[ERROR WhatsApp] HTTP status: {resp.status_code}")
+            try:
+                error_data = resp.json()
+                err = error_data.get("error", {})
+                print(f"[ERROR WhatsApp] code:     {err.get('code')}")
+                print(f"[ERROR WhatsApp] message:  {err.get('message')}")
+                print(f"[ERROR WhatsApp] details:  {err.get('error_data', {}).get('details')}")
+            except Exception:
+                print(f"[ERROR WhatsApp] Respuesta cruda: {resp.text}")
+            print("=" * 60)
+
+        resp.raise_for_status()
+        data = resp.json()
+
+    wamid = None
+    try:
+        wamid = data["messages"][0]["id"]
+    except (KeyError, IndexError):
+        pass
+
+    return {"exito": True, "wamid": wamid, "respuesta": data}
+
+
+# ============ ENVIAR PLANTILLA (TEMPLATE) ============
+def enviar_plantilla(
+    numero_destino: str,
+    nombre_plantilla: str,
+    variables: Optional[list] = None,
+    idioma: str = "es_AR",
+) -> dict:
+    """
+    Envia una PLANTILLA aprobada por WhatsApp Cloud API.
+
+    A diferencia de enviar_mensaje (texto libre), la plantilla es el unico
+    tipo de mensaje que Meta permite mandar cuando el bot INICIA la conversacion
+    (fuera de la ventana de 24hs). Tiene que estar aprobada de antemano.
+
+    - numero_destino: numero destino (se normaliza igual que en enviar_mensaje).
+    - nombre_plantilla: nombre exacto de la plantilla aprobada (ej: "aviso_derivacion").
+    - variables: lista de textos que van en las {{1}}, {{2}}, {{3}}... del cuerpo,
+                 EN ORDEN. Si la plantilla no tiene variables, pasar None o [].
+    - idioma: codigo de idioma con el que se aprobo la plantilla (ej: "es_AR", "es").
+
+    Reusa normalizar_numero, el phone_number_id y el token.
+    Si Meta rechaza el envio, imprime el detalle EXACTO (igual que enviar_mensaje).
+    """
+    numero_normalizado = normalizar_numero(numero_destino)
+    if numero_normalizado != numero_destino:
+        print(f"[NUM] Numero normalizado: {numero_destino} -> {numero_normalizado}")
+
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/messages"
+    headers = {
+        "Authorization": f"Bearer {_access_token()}",
+        "Content-Type": "application/json",
+    }
+
+    template_obj = {
+        "name": nombre_plantilla,
+        "language": {"code": idioma},
+    }
+
+    # Si hay variables, van como parametros del componente "body"
+    if variables:
+        template_obj["components"] = [
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": str(v)} for v in variables
+                ],
+            }
+        ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": numero_normalizado,
+        "type": "template",
+        "template": template_obj,
+    }
+
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+
+        if resp.status_code >= 400:
+            print("=" * 60)
+            print(f"[ERROR WhatsApp] Meta rechazo la plantilla '{nombre_plantilla}' a: {numero_normalizado}")
             print(f"[ERROR WhatsApp] HTTP status: {resp.status_code}")
             try:
                 error_data = resp.json()

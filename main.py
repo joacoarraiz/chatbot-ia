@@ -12,6 +12,10 @@ Flujo del webhook:
   7. Enviamos la respuesta por WhatsApp Cloud API.
   8. Guardamos el mensaje saliente.
 
+Ademas del webhook, corre un scheduler interno (APScheduler) que dispara
+tareas periodicas (ej: aviso de derivaciones) sin depender de N8N ni de
+servicios externos. Esto viaja junto con el bot al deployar a Cloud Run.
+
 Para correr localmente:
     uvicorn main:app --reload --port 8000
 """
@@ -20,6 +24,7 @@ from __future__ import annotations
 import os
 import sys
 import inspect
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -29,10 +34,14 @@ load_dotenv()
 
 from fastapi import FastAPI, Request, Response
 
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from functions.whatsapp import (
     enviar_mensaje, validar_firma, parsear_mensaje_entrante
 )
-from functions.audio_tools import descargar_audio_whatsapp, transcribir_audio
+from functions.audio_tools import (
+    descargar_audio_whatsapp, transcribir_audio, subir_audio_a_storage
+)
 
 # Importar el cerebro del bot
 from agents.router.router import clasificar
@@ -42,10 +51,13 @@ from agents.cotizacion.cotizacion import responder as responder_cotizacion
 from agents.pedido.pedido import responder as responder_pedido
 from agents.derivacion.derivacion import responder as responder_derivacion
 
+# Tareas periodicas (jobs del scheduler interno)
+from scripts.aviso_derivacion import avisar_derivaciones_pendientes
+
 from functions.db import get_client
 
 
-app = FastAPI(title="Toni", version="0.2.0")
+app = FastAPI(title="Toni", version="0.3.1")
 
 EMPRESA_ID = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
 
@@ -58,10 +70,72 @@ AGENTES = {
 }
 
 
+# ============ SCHEDULER INTERNO (reemplaza N8N) ============
+# El scheduler vive adentro del bot. Cuando uvicorn arranca, lo prendemos;
+# cuando se apaga, lo frenamos. Asi las tareas periodicas viajan junto con
+# el bot cuando deployamos a Cloud Run (un solo paquete, sin N8N externo).
+scheduler = BackgroundScheduler(timezone="America/Argentina/Buenos_Aires")
+
+
+def job_aviso_derivaciones():
+    """Wrapper del job de avisos. El scheduler lo llama cada 2 minutos."""
+    try:
+        avisar_derivaciones_pendientes(verbose=True)
+    except Exception as e:
+        print(f"[SCHEDULER][ERROR] job_aviso_derivaciones: {e}")
+
+
+@app.on_event("startup")
+def iniciar_scheduler():
+    """Al arrancar uvicorn: registrar los jobs y prender el scheduler."""
+
+    # --- Job 1: aviso de derivaciones (ACTIVO) ---
+    # Cada 2 minutos revisa v_derivaciones_pendientes y avisa por WhatsApp.
+    scheduler.add_job(
+        job_aviso_derivaciones,
+        trigger="interval",
+        minutes=2,
+        id="aviso_derivaciones",
+        replace_existing=True,
+        max_instances=1,          # que no se pisen dos corridas
+        coalesce=True,            # si se atrasa, junta las pendientes en una
+    )
+
+    # --- Job 2: repregunta al cliente (APAGADO A PROPOSITO) ---
+    # OJO: esto le manda un mensaje al CLIENTE FINAL por iniciativa del bot.
+    # Eso requiere una plantilla de WhatsApp aprobada APARTE (distinta a
+    # 'aviso_derivacion') y muy probablemente pasar por App Review de Meta.
+    # La plantilla 'seguimiento_consulta' ya esta EN REVISION en Meta.
+    # Cuando este aprobada + salgamos del sandbox:
+    #   1) crear el script scripts/repregunta_inactivos.py
+    #   2) importarlo arriba
+    #   3) destapar estas lineas
+    #
+    # scheduler.add_job(
+    #     job_repregunta_inactivos,
+    #     trigger="interval",
+    #     minutes=60,
+    #     id="repregunta_inactivos",
+    #     replace_existing=True,
+    #     max_instances=1,
+    #     coalesce=True,
+    # )
+
+    scheduler.start()
+    print("[SCHEDULER] Iniciado. Jobs activos:", [j.id for j in scheduler.get_jobs()])
+
+
+@app.on_event("shutdown")
+def apagar_scheduler():
+    """Al apagar uvicorn: frenar el scheduler prolijamente."""
+    scheduler.shutdown(wait=False)
+    print("[SCHEDULER] Detenido.")
+
+
 # ============ ENDPOINTS BASICOS ============
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Toni", "version": "0.2.0"}
+    return {"status": "ok", "service": "Toni", "version": "0.3.1"}
 
 
 @app.get("/health")
@@ -179,13 +253,26 @@ async def procesar_mensaje(mensaje: dict):
     # ===== Obtener el texto (transcribir si es audio) =====
     texto = mensaje.get("texto")
 
+    # Guardamos aca el link al audio original (si es audio) para archivarlo
+    # despues en la tabla mensaje. Arranca en None (los mensajes de texto no
+    # tienen audio).
+    media_url_audio = None
+    archivo_audio_local = None
+
     if mensaje["tipo"] == "audio" and mensaje.get("media_id"):
         print("[AUDIO] Descargando y transcribiendo...")
         try:
+            # Carpeta temporal del sistema: funciona igual en Windows y Linux.
+            # (Antes usabamos /tmp/ fijo, que no existe en Windows.)
+            carpeta_tmp = Path(tempfile.gettempdir())
+            destino = carpeta_tmp / f"audio_{mensaje['media_id']}.ogg"
+
             archivo = descargar_audio_whatsapp(
                 media_id=mensaje["media_id"],
-                destino_local=f"/tmp/audio_{mensaje['media_id']}.ogg",
+                destino_local=destino,
             )
+            archivo_audio_local = archivo  # lo usamos mas abajo para subir a Storage
+
             transcripcion = transcribir_audio(archivo)
             if transcripcion["exito"]:
                 texto = transcripcion["texto_transcrito"]
@@ -248,12 +335,30 @@ async def procesar_mensaje(mensaje: dict):
         }).execute().data[0]
         conversacion_id = conv["id"]
 
+    # ===== Si era audio, archivarlo en Storage (extra, no puede romper el flujo) =====
+    # Ahora que tenemos conversacion_id, subimos el audio original al bucket "media"
+    # y guardamos el link. Si algo falla aca, lo registramos pero seguimos igual:
+    # el bot ya tiene el texto transcrito y va a responder normal.
+    if archivo_audio_local is not None:
+        try:
+            subida = subir_audio_a_storage(
+                archivo_local=archivo_audio_local,
+                conversacion_id=conversacion_id,
+                empresa_id=EMPRESA_ID,
+            )
+            media_url_audio = subida.get("url_firmada")
+            print(f"[AUDIO] Archivado en Storage: {subida.get('ruta_storage')}")
+        except Exception as e:
+            # No rompemos la conversacion por un fallo de archivado.
+            print(f"[WARN] No pude archivar el audio en Storage: {e}")
+
     # ===== Guardar mensaje entrante =====
     sb.table("mensaje").insert({
         "conversacion_id": conversacion_id,
         "emisor": "cliente",
         "contenido": texto,
         "tipo_media": "audio" if mensaje["tipo"] == "audio" else "texto",
+        "media_url": media_url_audio,   # link al audio original (None si fue texto)
         "whatsapp_msg_id": mensaje.get("wamid"),
     }).execute()
 
