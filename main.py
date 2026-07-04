@@ -35,6 +35,7 @@ load_dotenv()
 from fastapi import FastAPI, Request, Response
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from openai import OpenAI
 
 from functions.whatsapp import (
     enviar_mensaje, validar_firma, parsear_mensaje_entrante
@@ -57,7 +58,7 @@ from scripts.aviso_derivacion import avisar_derivaciones_pendientes
 from functions.db import get_client
 
 
-app = FastAPI(title="Toni", version="0.3.1")
+app = FastAPI(title="Toni", version="0.3.2")
 
 EMPRESA_ID = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
 
@@ -135,7 +136,7 @@ def apagar_scheduler():
 # ============ ENDPOINTS BASICOS ============
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Toni", "version": "0.3.1"}
+    return {"status": "ok", "service": "Toni", "version": "0.3.2"}
 
 
 @app.get("/health")
@@ -240,6 +241,55 @@ def get_historial_para_agente(conversacion_id, limite=10, excluir_wamid=None):
         historial.append({"role": rol, "content": contenido})
 
     return historial
+
+# ============ RESPUESTA SOCIAL (saludos, gracias, despedidas) ============
+def responder_social(mensaje_cliente, historial=None):
+    """
+    Genera una respuesta calida para la charla social que cae en 'ninguno'
+    (saludos, "como estas", "gracias", "chau"). Toni responde como un vendedor
+    de mostrador argentino, breve y con voseo, y deja la puerta abierta a que
+    le pidan un repuesto. Usa el historial para tener contexto de la charla.
+
+    Si por lo que sea el LLM falla, devuelve un saludo amable por defecto
+    (nunca rompe el flujo, nunca se queda sin responder).
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return "¡Hola! Soy Toni 👋 ¿Qué repuesto andás buscando?"
+
+    # Modelo chico y barato alcanza para un saludo. Toma MODEL_SOCIAL si existe,
+    # sino MODEL_ROUTER, sino un default razonable.
+    modelo = os.environ.get("MODEL_SOCIAL") or os.environ.get("MODEL_ROUTER") or "gpt-4.1-mini"
+
+    sistema = (
+        "Sos Toni, el asistente por WhatsApp de un comercio de autopartes en Argentina. "
+        "El cliente te escribio algo social (un saludo, un 'como estas', un 'gracias' o una "
+        "despedida), no un pedido concreto. Responde como un vendedor de mostrador argentino: "
+        "calido, breve, con voseo, natural (una o dos frases como mucho). "
+        "Si es un saludo o te pregunta como estas, devolve el saludo y ofrece ayuda con repuestos. "
+        "Si es una despedida, despedite con buena onda. Si te agradece, responde con gusto. "
+        "Siempre deja la puerta abierta a que te pidan un repuesto, sin ser insistente ni pesado. "
+        "NO inventes precios, stock, horarios ni datos del negocio. Usa como mucho un emoji."
+    )
+
+    mensajes = [{"role": "system", "content": sistema}]
+    if historial:
+        mensajes.extend(historial)
+    mensajes.append({"role": "user", "content": mensaje_cliente})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=modelo,
+            messages=mensajes,
+            temperature=0.7,
+            max_tokens=120,
+        )
+        texto = (resp.choices[0].message.content or "").strip()
+        return texto or "¡Hola! Soy Toni 👋 ¿Qué andás buscando?"
+    except Exception as e:
+        print(f"[WARN] responder_social fallo: {e}")
+        return "¡Hola! Soy Toni 👋 ¿Qué repuesto andás buscando?"
 
 # ============ LOGICA DE PROCESAMIENTO ============
 async def procesar_mensaje(mensaje: dict):
@@ -378,7 +428,9 @@ async def procesar_mensaje(mensaje: dict):
 
     # ===== Invocar agente =====
     if agente_elegido == "ninguno" or agente_elegido not in AGENTES:
-        respuesta_texto = "Hola! Soy Toni. En que te puedo ayudar con repuestos?"
+        # Charla social (saludo, "como estas", "gracias", "chau"): Toni responde
+        # calido y con contexto, en vez de la frase fija de antes.
+        respuesta_texto = responder_social(texto, historial=historial)
     else:
         try:
             agente_fn = AGENTES[agente_elegido]
