@@ -14,8 +14,8 @@ Flujo del webhook:
   9. Guardamos el mensaje saliente.
 
 Ademas del webhook, corre un scheduler interno (APScheduler) que dispara
-tareas periodicas (ej: aviso de derivaciones) sin depender de N8N ni de
-servicios externos.
+tareas periodicas (avisos de derivacion + repregunta a inactivos) sin
+depender de N8N ni de servicios externos.
 
 Para correr localmente:
     uvicorn main:app --reload --port 8000
@@ -56,11 +56,12 @@ from agents.derivacion.derivacion import responder as responder_derivacion
 
 # Tareas periodicas (jobs del scheduler interno)
 from scripts.aviso_derivacion import avisar_derivaciones_pendientes
+from scripts.repregunta_inactivos import repreguntar_inactivos
 
 from functions.db import get_client
 
 
-app = FastAPI(title="Toni", version="0.5.0")
+app = FastAPI(title="Toni", version="0.6.0")
 
 # Comercio por defecto (fallback si un numero no esta mapeado en numero_whatsapp).
 EMPRESA_ID_DEFAULT = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
@@ -115,6 +116,14 @@ def job_aviso_derivaciones():
         print(f"[SCHEDULER][ERROR] job_aviso_derivaciones: {e}")
 
 
+def job_repregunta_inactivos():
+    """Wrapper del job de repregunta. El scheduler lo llama cada 30 minutos."""
+    try:
+        repreguntar_inactivos(verbose=True)
+    except Exception as e:
+        print(f"[SCHEDULER][ERROR] job_repregunta_inactivos: {e}")
+
+
 @app.on_event("startup")
 def iniciar_scheduler():
     """Al arrancar uvicorn: registrar los jobs y prender el scheduler."""
@@ -130,17 +139,21 @@ def iniciar_scheduler():
         coalesce=True,
     )
 
-    # --- Job 2: repregunta al cliente (APAGADO A PROPOSITO) ---
-    # Requiere la plantilla 'seguimiento_consulta' aprobada + salir del sandbox.
-    # scheduler.add_job(
-    #     job_repregunta_inactivos,
-    #     trigger="interval",
-    #     minutes=60,
-    #     id="repregunta_inactivos",
-    #     replace_existing=True,
-    #     max_instances=1,
-    #     coalesce=True,
-    # )
+    # --- Job 2: repregunta a inactivos (ACTIVO) ---
+    # Cada 30 min revisa conversaciones colgadas y repregunta segun el tiempo
+    # que cada comercio configuro en config_negocio.repregunta_horas.
+    # La plantilla 'seguimiento_consulta' ya esta aprobada por Meta.
+    # OJO: en sandbox solo llega a numeros autorizados. Para clientes reales,
+    # hace falta salir del sandbox (App Review).
+    scheduler.add_job(
+        job_repregunta_inactivos,
+        trigger="interval",
+        minutes=30,
+        id="repregunta_inactivos",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
 
     scheduler.start()
     print("[SCHEDULER] Iniciado. Jobs activos:", [j.id for j in scheduler.get_jobs()])
@@ -156,7 +169,7 @@ def apagar_scheduler():
 # ============ ENDPOINTS BASICOS ============
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Toni", "version": "0.5.0"}
+    return {"status": "ok", "service": "Toni", "version": "0.6.0"}
 
 
 @app.get("/health")
