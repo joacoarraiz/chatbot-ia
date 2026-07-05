@@ -5,16 +5,17 @@ Punto de entrada del servidor web. Aca vive el webhook de WhatsApp.
 Flujo del webhook:
   1. Meta manda un POST cuando llega un mensaje.
   2. Validamos la firma (HMAC) para confirmar que viene de Meta.
-  3. Parseamos el mensaje (texto o audio).
-  4. Guardamos/buscamos el cliente, abrimos/continuamos conversacion.
-  5. Guardamos el mensaje entrante.
-  6. Pasamos el texto al router -> agente -> generamos respuesta.
-  7. Enviamos la respuesta por WhatsApp Cloud API.
-  8. Guardamos el mensaje saliente.
+  3. Parseamos el mensaje (texto o audio) y vemos por que numero entro.
+  4. Buscamos a que comercio (empresa) corresponde ese numero.
+  5. Guardamos/buscamos el cliente, abrimos/continuamos conversacion.
+  6. Guardamos el mensaje entrante.
+  7. Pasamos el texto al router -> agente -> generamos respuesta.
+  8. Enviamos la respuesta por WhatsApp Cloud API (por la misma linea).
+  9. Guardamos el mensaje saliente.
 
 Ademas del webhook, corre un scheduler interno (APScheduler) que dispara
 tareas periodicas (ej: aviso de derivaciones) sin depender de N8N ni de
-servicios externos. Esto viaja junto con el bot al deployar a Cloud Run.
+servicios externos.
 
 Para correr localmente:
     uvicorn main:app --reload --port 8000
@@ -58,9 +59,10 @@ from scripts.aviso_derivacion import avisar_derivaciones_pendientes
 from functions.db import get_client
 
 
-app = FastAPI(title="Toni", version="0.3.2")
+app = FastAPI(title="Toni", version="0.4.0")
 
-EMPRESA_ID = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
+# Comercio por defecto (fallback si un numero no esta mapeado en numero_whatsapp).
+EMPRESA_ID_DEFAULT = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
 
 AGENTES = {
     "producto": responder_producto,
@@ -71,10 +73,36 @@ AGENTES = {
 }
 
 
+# ============ MULTI-COMERCIO: numero -> empresa ============
+def resolver_empresa(phone_number_id):
+    """
+    Dado el numero propio por el que entro el mensaje, devuelve a que
+    empresa (comercio) corresponde, mirando la tabla numero_whatsapp.
+
+    Red de seguridad: si el numero no esta cargado (o no vino), usa el
+    comercio por defecto (EMPRESA_ID_DEFAULT). Asi el bot nunca se queda
+    sin comercio y no se rompe aunque falte cargar el numero.
+    """
+    if not phone_number_id:
+        return EMPRESA_ID_DEFAULT
+    try:
+        sb = get_client()
+        r = (
+            sb.table("numero_whatsapp")
+            .select("empresa_id")
+            .eq("phone_number_id", phone_number_id)
+            .eq("activo", True)
+            .limit(1)
+            .execute()
+        )
+        if r.data:
+            return r.data[0]["empresa_id"]
+    except Exception as e:
+        print(f"[WARN] No pude resolver empresa por numero {phone_number_id}: {e}")
+    return EMPRESA_ID_DEFAULT
+
+
 # ============ SCHEDULER INTERNO (reemplaza N8N) ============
-# El scheduler vive adentro del bot. Cuando uvicorn arranca, lo prendemos;
-# cuando se apaga, lo frenamos. Asi las tareas periodicas viajan junto con
-# el bot cuando deployamos a Cloud Run (un solo paquete, sin N8N externo).
 scheduler = BackgroundScheduler(timezone="America/Argentina/Buenos_Aires")
 
 
@@ -91,27 +119,18 @@ def iniciar_scheduler():
     """Al arrancar uvicorn: registrar los jobs y prender el scheduler."""
 
     # --- Job 1: aviso de derivaciones (ACTIVO) ---
-    # Cada 2 minutos revisa v_derivaciones_pendientes y avisa por WhatsApp.
     scheduler.add_job(
         job_aviso_derivaciones,
         trigger="interval",
         minutes=2,
         id="aviso_derivaciones",
         replace_existing=True,
-        max_instances=1,          # que no se pisen dos corridas
-        coalesce=True,            # si se atrasa, junta las pendientes en una
+        max_instances=1,
+        coalesce=True,
     )
 
     # --- Job 2: repregunta al cliente (APAGADO A PROPOSITO) ---
-    # OJO: esto le manda un mensaje al CLIENTE FINAL por iniciativa del bot.
-    # Eso requiere una plantilla de WhatsApp aprobada APARTE (distinta a
-    # 'aviso_derivacion') y muy probablemente pasar por App Review de Meta.
-    # La plantilla 'seguimiento_consulta' ya esta EN REVISION en Meta.
-    # Cuando este aprobada + salgamos del sandbox:
-    #   1) crear el script scripts/repregunta_inactivos.py
-    #   2) importarlo arriba
-    #   3) destapar estas lineas
-    #
+    # Requiere la plantilla 'seguimiento_consulta' aprobada + salir del sandbox.
     # scheduler.add_job(
     #     job_repregunta_inactivos,
     #     trigger="interval",
@@ -136,7 +155,7 @@ def apagar_scheduler():
 # ============ ENDPOINTS BASICOS ============
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Toni", "version": "0.3.2"}
+    return {"status": "ok", "service": "Toni", "version": "0.4.0"}
 
 
 @app.get("/health")
@@ -147,10 +166,6 @@ async def health():
 # ============ WEBHOOK: VERIFICACION (GET) ============
 @app.get("/webhook")
 async def verificar_webhook(request: Request):
-    """
-    Meta hace un GET para verificar el webhook al configurarlo.
-    Tenemos que devolver el hub.challenge si el verify_token coincide.
-    """
     params = request.query_params
     modo = params.get("hub.mode")
     token = params.get("hub.verify_token")
@@ -160,7 +175,6 @@ async def verificar_webhook(request: Request):
 
     if modo == "subscribe" and token == verify_token:
         print("[OK] Webhook verificado por Meta.")
-        # Devolver el challenge como texto plano
         return Response(content=challenge, media_type="text/plain")
     else:
         print(f"[ERROR] Verificacion fallida. modo={modo} token_match={token == verify_token}")
@@ -170,19 +184,13 @@ async def verificar_webhook(request: Request):
 # ============ WEBHOOK: RECIBIR MENSAJES (POST) ============
 @app.post("/webhook")
 async def recibir_webhook(request: Request):
-    """
-    Meta manda un POST cada vez que llega un mensaje.
-    """
-    # 1. Leer el body crudo (necesario para validar HMAC)
     body_bytes = await request.body()
     firma = request.headers.get("X-Hub-Signature-256")
 
-    # 2. Validar firma
     if not validar_firma(body_bytes, firma):
         print("[ERROR] Firma invalida. Rechazando request.")
         return Response(content="Forbidden", status_code=403)
 
-    # 3. Parsear el body
     import json
     try:
         body = json.loads(body_bytes)
@@ -190,16 +198,12 @@ async def recibir_webhook(request: Request):
         print(f"[ERROR] Body no es JSON valido: {e}")
         return Response(content="Bad Request", status_code=400)
 
-    # 4. Extraer el mensaje
     mensaje = parsear_mensaje_entrante(body)
     if not mensaje:
-        # No es un mensaje procesable (puede ser un status update). Respondemos 200 igual.
         return Response(content="OK", status_code=200)
 
-    print(f"[MSG] De {mensaje['numero']} ({mensaje.get('nombre')}): tipo={mensaje['tipo']}")
+    print(f"[MSG] De {mensaje['numero']} ({mensaje.get('nombre')}): tipo={mensaje['tipo']} linea={mensaje.get('phone_number_id')}")
 
-    # 5. Procesar el mensaje (en este punto respondemos 200 rapido a Meta
-    #    y procesamos. Para simplificar, procesamos sincrono por ahora.)
     try:
         await procesar_mensaje(mensaje)
     except Exception as e:
@@ -207,23 +211,21 @@ async def recibir_webhook(request: Request):
         import traceback
         traceback.print_exc()
 
-    # 6. Siempre responder 200 a Meta (sino reintenta)
     return Response(content="OK", status_code=200)
+
 
 # ============ HISTORIAL CONVERSACIONAL ============
 def get_historial_para_agente(conversacion_id, limite=10, excluir_wamid=None):
     """
-    Lee los ultimos mensajes de una conversacion y los formatea
-    como OpenAI los espera: [{"role": "user"/"assistant", "content": ...}].
-    Traduce: emisor 'bot' -> 'assistant', emisor 'cliente' -> 'user'.
-    Excluye el mensaje actual (que se pasa aparte como mensaje_cliente).
+    Lee los ultimos mensajes de una conversacion y los formatea como
+    OpenAI los espera. Traduce: emisor 'bot' -> 'assistant', 'cliente' -> 'user'.
     """
     sb = get_client()
     msgs = (
         sb.table("mensaje")
         .select("emisor, contenido, whatsapp_msg_id, creado_at")
         .eq("conversacion_id", conversacion_id)
-        .order("creado_at", desc=False)   # cronologico: viejo -> nuevo
+        .order("creado_at", desc=False)
         .limit(limite)
         .execute()
         .data or []
@@ -231,7 +233,6 @@ def get_historial_para_agente(conversacion_id, limite=10, excluir_wamid=None):
 
     historial = []
     for m in msgs:
-        # No incluir el mensaje actual (ya se pasa como mensaje_cliente)
         if excluir_wamid and m.get("whatsapp_msg_id") == excluir_wamid:
             continue
         contenido = m.get("contenido")
@@ -242,23 +243,19 @@ def get_historial_para_agente(conversacion_id, limite=10, excluir_wamid=None):
 
     return historial
 
+
 # ============ RESPUESTA SOCIAL (saludos, gracias, despedidas) ============
 def responder_social(mensaje_cliente, historial=None):
     """
     Genera una respuesta calida para la charla social que cae en 'ninguno'
     (saludos, "como estas", "gracias", "chau"). Toni responde como un vendedor
-    de mostrador argentino, breve y con voseo, y deja la puerta abierta a que
-    le pidan un repuesto. Usa el historial para tener contexto de la charla.
-
-    Si por lo que sea el LLM falla, devuelve un saludo amable por defecto
-    (nunca rompe el flujo, nunca se queda sin responder).
+    de mostrador argentino, breve y con voseo. Usa el historial para contexto.
+    Si el LLM falla, devuelve un saludo por defecto (nunca rompe el flujo).
     """
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return "¡Hola! Soy Toni 👋 ¿Qué repuesto andás buscando?"
 
-    # Modelo chico y barato alcanza para un saludo. Toma MODEL_SOCIAL si existe,
-    # sino MODEL_ROUTER, sino un default razonable.
     modelo = os.environ.get("MODEL_SOCIAL") or os.environ.get("MODEL_ROUTER") or "gpt-4.1-mini"
 
     sistema = (
@@ -291,29 +288,30 @@ def responder_social(mensaje_cliente, historial=None):
         print(f"[WARN] responder_social fallo: {e}")
         return "¡Hola! Soy Toni 👋 ¿Qué repuesto andás buscando?"
 
+
 # ============ LOGICA DE PROCESAMIENTO ============
 async def procesar_mensaje(mensaje: dict):
     """
-    Procesa un mensaje entrante: lo guarda, lo pasa al bot, responde.
+    Procesa un mensaje entrante: resuelve el comercio, lo guarda,
+    lo pasa al bot, responde por la misma linea.
     """
     sb = get_client()
     numero = mensaje["numero"]
     nombre = mensaje.get("nombre") or "Cliente WhatsApp"
 
+    # ===== Multi-comercio: por que linea entro y a que comercio va =====
+    phone_number_id = mensaje.get("phone_number_id")
+    empresa_id = resolver_empresa(phone_number_id)
+    print(f"[EMPRESA] Mensaje ruteado a empresa_id={empresa_id}")
+
     # ===== Obtener el texto (transcribir si es audio) =====
     texto = mensaje.get("texto")
-
-    # Guardamos aca el link al audio original (si es audio) para archivarlo
-    # despues en la tabla mensaje. Arranca en None (los mensajes de texto no
-    # tienen audio).
     media_url_audio = None
     archivo_audio_local = None
 
     if mensaje["tipo"] == "audio" and mensaje.get("media_id"):
         print("[AUDIO] Descargando y transcribiendo...")
         try:
-            # Carpeta temporal del sistema: funciona igual en Windows y Linux.
-            # (Antes usabamos /tmp/ fijo, que no existe en Windows.)
             carpeta_tmp = Path(tempfile.gettempdir())
             destino = carpeta_tmp / f"audio_{mensaje['media_id']}.ogg"
 
@@ -321,7 +319,7 @@ async def procesar_mensaje(mensaje: dict):
                 media_id=mensaje["media_id"],
                 destino_local=destino,
             )
-            archivo_audio_local = archivo  # lo usamos mas abajo para subir a Storage
+            archivo_audio_local = archivo
 
             transcripcion = transcribir_audio(archivo)
             if transcripcion["exito"]:
@@ -334,15 +332,17 @@ async def procesar_mensaje(mensaje: dict):
             texto = None
 
     if not texto:
-        # No pudimos obtener texto. Respondemos pidiendo que escriba.
-        enviar_mensaje(numero, "Perdon, no pude leer tu mensaje. Me lo escribis como texto?")
+        enviar_mensaje(
+            numero,
+            "Perdon, no pude leer tu mensaje. Me lo escribis como texto?",
+            phone_number_id=phone_number_id,
+        )
         return
 
     # ===== Obtener o crear cliente =====
-    # Usamos la funcion fn_get_or_create_cliente que creamos en 02_clients.sql
     try:
         cliente_resp = sb.rpc("fn_get_or_create_cliente", {
-            "p_empresa_id": EMPRESA_ID,
+            "p_empresa_id": empresa_id,
             "p_canal": "whatsapp",
             "p_identificador": numero,
             "p_display_name": nombre,
@@ -350,9 +350,8 @@ async def procesar_mensaje(mensaje: dict):
         cliente_id = cliente_resp.data
     except Exception as e:
         print(f"[WARN] No pude usar fn_get_or_create_cliente: {e}. Creando manual.")
-        # Fallback: crear cliente simple
         cli = sb.table("cliente").insert({
-            "empresa_id": EMPRESA_ID,
+            "empresa_id": empresa_id,
             "nombre": nombre,
             "tipo": "b2c",
         }).execute().data[0]
@@ -365,7 +364,7 @@ async def procesar_mensaje(mensaje: dict):
     conv_existente = (
         sb.table("conversacion")
         .select("id")
-        .eq("empresa_id", EMPRESA_ID)
+        .eq("empresa_id", empresa_id)
         .eq("cliente_id", cliente_id)
         .eq("estado", "activa")
         .gte("abierta_at", hace_30)
@@ -378,28 +377,24 @@ async def procesar_mensaje(mensaje: dict):
         conversacion_id = conv_existente.data[0]["id"]
     else:
         conv = sb.table("conversacion").insert({
-            "empresa_id": EMPRESA_ID,
+            "empresa_id": empresa_id,
             "cliente_id": cliente_id,
             "canal": "whatsapp",
             "estado": "activa",
         }).execute().data[0]
         conversacion_id = conv["id"]
 
-    # ===== Si era audio, archivarlo en Storage (extra, no puede romper el flujo) =====
-    # Ahora que tenemos conversacion_id, subimos el audio original al bucket "media"
-    # y guardamos el link. Si algo falla aca, lo registramos pero seguimos igual:
-    # el bot ya tiene el texto transcrito y va a responder normal.
+    # ===== Si era audio, archivarlo en Storage (extra, no rompe el flujo) =====
     if archivo_audio_local is not None:
         try:
             subida = subir_audio_a_storage(
                 archivo_local=archivo_audio_local,
                 conversacion_id=conversacion_id,
-                empresa_id=EMPRESA_ID,
+                empresa_id=empresa_id,
             )
             media_url_audio = subida.get("url_firmada")
             print(f"[AUDIO] Archivado en Storage: {subida.get('ruta_storage')}")
         except Exception as e:
-            # No rompemos la conversacion por un fallo de archivado.
             print(f"[WARN] No pude archivar el audio en Storage: {e}")
 
     # ===== Guardar mensaje entrante =====
@@ -408,11 +403,11 @@ async def procesar_mensaje(mensaje: dict):
         "emisor": "cliente",
         "contenido": texto,
         "tipo_media": "audio" if mensaje["tipo"] == "audio" else "texto",
-        "media_url": media_url_audio,   # link al audio original (None si fue texto)
+        "media_url": media_url_audio,
         "whatsapp_msg_id": mensaje.get("wamid"),
     }).execute()
 
-    # ===== Leer historial de la conversacion (memoria) =====
+    # ===== Leer historial (memoria) =====
     historial = get_historial_para_agente(
         conversacion_id,
         limite=10,
@@ -428,19 +423,15 @@ async def procesar_mensaje(mensaje: dict):
 
     # ===== Invocar agente =====
     if agente_elegido == "ninguno" or agente_elegido not in AGENTES:
-        # Charla social (saludo, "como estas", "gracias", "chau"): Toni responde
-        # calido y con contexto, en vez de la frase fija de antes.
         respuesta_texto = responder_social(texto, historial=historial)
     else:
         try:
             agente_fn = AGENTES[agente_elegido]
-            # Armar los argumentos base
             kwargs = {
                 "mensaje_cliente": texto,
-                "contexto": {"canal": "whatsapp", "cliente_id": cliente_id},
+                "contexto": {"canal": "whatsapp", "cliente_id": cliente_id, "empresa_id": empresa_id},
                 "verbose": False,
             }
-            # Solo pasar 'historial' si el agente lo acepta (asi no rompemos los que no lo tienen)
             params_del_agente = inspect.signature(agente_fn).parameters
             if "historial" in params_del_agente:
                 kwargs["historial"] = historial
@@ -451,8 +442,8 @@ async def procesar_mensaje(mensaje: dict):
             print(f"[ERROR] Agente {agente_elegido}: {e}")
             respuesta_texto = "Disculpa, tuve un problema procesando tu consulta. Podes intentar de nuevo?"
 
-    # ===== Enviar respuesta por WhatsApp =====
-    envio = enviar_mensaje(numero, respuesta_texto)
+    # ===== Enviar respuesta por WhatsApp (por la misma linea) =====
+    envio = enviar_mensaje(numero, respuesta_texto, phone_number_id=phone_number_id)
     print(f"[SENT] Respuesta enviada. wamid={envio.get('wamid')}")
 
     # ===== Guardar mensaje saliente =====

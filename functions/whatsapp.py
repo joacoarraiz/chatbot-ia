@@ -19,7 +19,16 @@ import httpx
 GRAPH_API_VERSION = "v21.0"
 
 
-def _phone_number_id() -> str:
+def _phone_number_id(override: Optional[str] = None) -> str:
+    """
+    Devuelve el phone_number_id a usar para enviar.
+    - Si se pasa 'override' (el numero por el que entro el mensaje), usa ese.
+    - Si no, cae al del .env (comportamiento de siempre).
+    Asi el bot puede responder por el mismo numero que recibio el mensaje,
+    sin romper el flujo de un solo numero.
+    """
+    if override:
+        return override
     pid = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
     if not pid:
         raise RuntimeError("Falta WHATSAPP_PHONE_NUMBER_ID en el .env")
@@ -56,17 +65,22 @@ def normalizar_numero(numero: str) -> str:
 
 
 # ============ ENVIAR MENSAJE ============
-def enviar_mensaje(numero_destino: str, texto: str) -> dict:
+def enviar_mensaje(numero_destino: str, texto: str, phone_number_id: Optional[str] = None) -> dict:
     """
     Envia un mensaje de texto por WhatsApp Cloud API.
     Normaliza el numero argentino antes de enviar.
+
+    - phone_number_id (opcional): el numero PROPIO desde el que se envia.
+      Sirve para multi-comercio: responder por la misma linea que recibio
+      el mensaje. Si no se pasa, usa el del .env (comportamiento de siempre).
+
     Si Meta rechaza el envio, imprime el detalle EXACTO.
     """
     numero_normalizado = normalizar_numero(numero_destino)
     if numero_normalizado != numero_destino:
         print(f"[NUM] Numero normalizado: {numero_destino} -> {numero_normalizado}")
 
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/messages"
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id(phone_number_id)}/messages"
     headers = {
         "Authorization": f"Bearer {_access_token()}",
         "Content-Type": "application/json",
@@ -114,6 +128,7 @@ def enviar_plantilla(
     nombre_plantilla: str,
     variables: Optional[list] = None,
     idioma: str = "es_AR",
+    phone_number_id: Optional[str] = None,
 ) -> dict:
     """
     Envia una PLANTILLA aprobada por WhatsApp Cloud API.
@@ -127,6 +142,7 @@ def enviar_plantilla(
     - variables: lista de textos que van en las {{1}}, {{2}}, {{3}}... del cuerpo,
                  EN ORDEN. Si la plantilla no tiene variables, pasar None o [].
     - idioma: codigo de idioma con el que se aprobo la plantilla (ej: "es_AR", "es").
+    - phone_number_id (opcional): numero propio desde el que se envia (multi-comercio).
 
     Reusa normalizar_numero, el phone_number_id y el token.
     Si Meta rechaza el envio, imprime el detalle EXACTO (igual que enviar_mensaje).
@@ -135,7 +151,7 @@ def enviar_plantilla(
     if numero_normalizado != numero_destino:
         print(f"[NUM] Numero normalizado: {numero_destino} -> {numero_normalizado}")
 
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id()}/messages"
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{_phone_number_id(phone_number_id)}/messages"
     headers = {
         "Authorization": f"Bearer {_access_token()}",
         "Content-Type": "application/json",
@@ -229,6 +245,10 @@ def validar_firma(payload_bytes: bytes, firma_header: Optional[str]) -> bool:
 def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
     """
     Extrae los datos relevantes de un webhook de WhatsApp.
+
+    Ahora tambien extrae 'phone_number_id': el numero PROPIO por el que
+    entro el mensaje. Sirve para multi-comercio (saber a que comercio va
+    y por que linea responder).
     """
     try:
         entry = body["entry"][0]
@@ -237,6 +257,12 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
 
         if "messages" not in value:
             return None
+
+        # Numero propio por el que entro el mensaje (multi-comercio).
+        # Viene en value.metadata.phone_number_id. Si no esta, queda None.
+        phone_number_id = None
+        metadata = value.get("metadata") or {}
+        phone_number_id = metadata.get("phone_number_id")
 
         mensaje = value["messages"][0]
         numero = mensaje["from"]
@@ -254,6 +280,7 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
             "tipo": tipo,
             "texto": None,
             "media_id": None,
+            "phone_number_id": phone_number_id,   # <-- nuevo
         }
 
         if tipo == "text":
@@ -266,3 +293,4 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
     except (KeyError, IndexError) as e:
         print(f"[WARN] No pude parsear el mensaje entrante: {e}")
         return None
+        
