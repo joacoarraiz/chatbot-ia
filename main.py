@@ -5,7 +5,7 @@ Punto de entrada del servidor web. Aca vive el webhook de WhatsApp.
 Flujo del webhook:
   1. Meta manda un POST cuando llega un mensaje.
   2. Validamos la firma (HMAC) para confirmar que viene de Meta.
-  3. Parseamos el mensaje (texto o audio) y vemos por que numero entro.
+  3. Parseamos el mensaje (texto, audio o imagen) y vemos por que numero entro.
   4. Buscamos a que comercio (empresa) corresponde ese numero.
   5. Guardamos/buscamos el cliente, abrimos/continuamos conversacion.
   6. Guardamos el mensaje entrante.
@@ -44,6 +44,7 @@ from functions.whatsapp import (
 from functions.audio_tools import (
     descargar_audio_whatsapp, transcribir_audio, subir_audio_a_storage
 )
+from functions.vision_tools import analizar_imagen
 
 # Importar el cerebro del bot
 from agents.router.router import clasificar
@@ -59,7 +60,7 @@ from scripts.aviso_derivacion import avisar_derivaciones_pendientes
 from functions.db import get_client
 
 
-app = FastAPI(title="Toni", version="0.4.0")
+app = FastAPI(title="Toni", version="0.5.0")
 
 # Comercio por defecto (fallback si un numero no esta mapeado en numero_whatsapp).
 EMPRESA_ID_DEFAULT = int(os.environ.get("EMPRESA_ID_PILOTO", "1"))
@@ -155,7 +156,7 @@ def apagar_scheduler():
 # ============ ENDPOINTS BASICOS ============
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Toni", "version": "0.4.0"}
+    return {"status": "ok", "service": "Toni", "version": "0.5.0"}
 
 
 @app.get("/health")
@@ -304,23 +305,21 @@ async def procesar_mensaje(mensaje: dict):
     empresa_id = resolver_empresa(phone_number_id)
     print(f"[EMPRESA] Mensaje ruteado a empresa_id={empresa_id}")
 
-    # ===== Obtener el texto (transcribir si es audio) =====
+    # ===== Obtener el texto (transcribir audio / analizar imagen) =====
     texto = mensaje.get("texto")
-    media_url_audio = None
-    archivo_audio_local = None
+    media_url_media = None       # link al audio o imagen original (para archivar)
+    archivo_media_local = None   # archivo bajado (audio o imagen)
+    tipo_media_guardar = "texto" # como se guarda en la tabla mensaje
 
+    # --- AUDIO ---
     if mensaje["tipo"] == "audio" and mensaje.get("media_id"):
         print("[AUDIO] Descargando y transcribiendo...")
+        tipo_media_guardar = "audio"
         try:
             carpeta_tmp = Path(tempfile.gettempdir())
             destino = carpeta_tmp / f"audio_{mensaje['media_id']}.ogg"
-
-            archivo = descargar_audio_whatsapp(
-                media_id=mensaje["media_id"],
-                destino_local=destino,
-            )
-            archivo_audio_local = archivo
-
+            archivo = descargar_audio_whatsapp(media_id=mensaje["media_id"], destino_local=destino)
+            archivo_media_local = archivo
             transcripcion = transcribir_audio(archivo)
             if transcripcion["exito"]:
                 texto = transcripcion["texto_transcrito"]
@@ -331,10 +330,39 @@ async def procesar_mensaje(mensaje: dict):
             print(f"[ERROR] Transcribiendo audio: {e}")
             texto = None
 
+    # --- IMAGEN ---
+    elif mensaje["tipo"] == "image" and mensaje.get("media_id"):
+        print("[IMAGEN] Descargando y analizando...")
+        tipo_media_guardar = "imagen"
+        caption = mensaje.get("texto")  # lo que el cliente escribio junto a la foto
+        try:
+            carpeta_tmp = Path(tempfile.gettempdir())
+            destino = carpeta_tmp / f"imagen_{mensaje['media_id']}.jpg"
+            # La misma funcion de descarga sirve para imagenes (mismo mecanismo de Meta)
+            archivo = descargar_audio_whatsapp(media_id=mensaje["media_id"], destino_local=destino)
+            archivo_media_local = archivo
+            analisis = analizar_imagen(archivo)
+            if analisis["exito"]:
+                desc = analisis["descripcion"]
+                print(f"[IMAGEN] Analisis: {desc}")
+                # Armamos el texto que va al router: lo que se ve en la foto
+                # + el caption del cliente si escribio algo.
+                if caption:
+                    texto = f"{caption}. (El cliente mando una foto: {desc})"
+                else:
+                    texto = f"El cliente mando una foto de un repuesto: {desc}"
+            else:
+                texto = None
+        except Exception as e:
+            print(f"[ERROR] Analizando imagen: {e}")
+            texto = None
+
     if not texto:
+        # No pudimos obtener texto (ni de audio, ni de imagen, ni escrito).
+        # Toni pide amablemente que lo escriban.
         enviar_mensaje(
             numero,
-            "Perdon, no pude leer tu mensaje. Me lo escribis como texto?",
+            "Perdon, no pude leer bien lo que me mandaste. Me lo escribis como texto asi te ayudo?",
             phone_number_id=phone_number_id,
         )
         return
@@ -384,26 +412,26 @@ async def procesar_mensaje(mensaje: dict):
         }).execute().data[0]
         conversacion_id = conv["id"]
 
-    # ===== Si era audio, archivarlo en Storage (extra, no rompe el flujo) =====
-    if archivo_audio_local is not None:
+    # ===== Si vino audio o imagen, archivarlo en Storage (extra, no rompe el flujo) =====
+    if archivo_media_local is not None:
         try:
             subida = subir_audio_a_storage(
-                archivo_local=archivo_audio_local,
+                archivo_local=archivo_media_local,
                 conversacion_id=conversacion_id,
                 empresa_id=empresa_id,
             )
-            media_url_audio = subida.get("url_firmada")
-            print(f"[AUDIO] Archivado en Storage: {subida.get('ruta_storage')}")
+            media_url_media = subida.get("url_firmada")
+            print(f"[MEDIA] Archivado en Storage: {subida.get('ruta_storage')}")
         except Exception as e:
-            print(f"[WARN] No pude archivar el audio en Storage: {e}")
+            print(f"[WARN] No pude archivar el archivo en Storage: {e}")
 
     # ===== Guardar mensaje entrante =====
     sb.table("mensaje").insert({
         "conversacion_id": conversacion_id,
         "emisor": "cliente",
         "contenido": texto,
-        "tipo_media": "audio" if mensaje["tipo"] == "audio" else "texto",
-        "media_url": media_url_audio,
+        "tipo_media": tipo_media_guardar,
+        "media_url": media_url_media,
         "whatsapp_msg_id": mensaje.get("wamid"),
     }).execute()
 

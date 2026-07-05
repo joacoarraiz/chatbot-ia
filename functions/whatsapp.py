@@ -246,9 +246,8 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
     """
     Extrae los datos relevantes de un webhook de WhatsApp.
 
-    Ahora tambien extrae 'phone_number_id': el numero PROPIO por el que
-    entro el mensaje. Sirve para multi-comercio (saber a que comercio va
-    y por que linea responder).
+    Extrae 'phone_number_id' (multi-comercio) y el 'media_id' segun el tipo:
+    audio o imagen. Asi el bot puede bajar el archivo despues.
     """
     try:
         entry = body["entry"][0]
@@ -259,7 +258,6 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
             return None
 
         # Numero propio por el que entro el mensaje (multi-comercio).
-        # Viene en value.metadata.phone_number_id. Si no esta, queda None.
         phone_number_id = None
         metadata = value.get("metadata") or {}
         phone_number_id = metadata.get("phone_number_id")
@@ -280,17 +278,22 @@ def parsear_mensaje_entrante(body: dict) -> Optional[dict]:
             "tipo": tipo,
             "texto": None,
             "media_id": None,
-            "phone_number_id": phone_number_id,   # <-- nuevo
+            "phone_number_id": phone_number_id,
         }
 
         if tipo == "text":
             resultado["texto"] = mensaje["text"]["body"]
         elif tipo == "audio":
             resultado["media_id"] = mensaje["audio"]["id"]
+        elif tipo == "image":
+            # WhatsApp manda la imagen con un media_id (igual que el audio).
+            # El caption (texto que el cliente escribe junto a la foto) lo
+            # guardamos como texto por si aporta contexto.
+            resultado["media_id"] = mensaje["image"]["id"]
+            resultado["texto"] = mensaje["image"].get("caption")
 
         return resultado
 
     except (KeyError, IndexError) as e:
         print(f"[WARN] No pude parsear el mensaje entrante: {e}")
         return None
-        
