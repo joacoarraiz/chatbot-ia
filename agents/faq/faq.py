@@ -1,7 +1,11 @@
 """
 agents/faq/faq.py
 El agente FAQ responde preguntas sobre el comercio:
-horarios, ubicación, formas de pago, envíos, etc.
+horarios, ubicación, formas de pago, envíos, servicios, etc.
+
+Usa DOS fuentes con linea divisoria clara:
+  - consultar_info_empresa  -> empresa.persona_config (envios, pagos, telefono, marcas)
+  - consultar_config_negocio -> config_negocio (horarios, servicios, web, redes, feriados)
 """
 from __future__ import annotations
 
@@ -12,10 +16,15 @@ from pathlib import Path
 from openai import OpenAI
 
 from functions.faq_tools import TOOLS_MAP
+from functions.config_tools import TOOLS_MAP as CONFIG_TOOLS_MAP
 
 
 _AGENT_DIR = Path(__file__).parent
 _PROMPT = (_AGENT_DIR / "prompt.md").read_text(encoding="utf-8")
+
+
+# Juntamos las dos fuentes de tools sin tocar faq_tools (que ya anda).
+TOOLS_MAP_COMBINADO = {**TOOLS_MAP, **CONFIG_TOOLS_MAP}
 
 
 TOOLS_DEF = [
@@ -23,15 +32,36 @@ TOOLS_DEF = [
         "type": "function",
         "function": {
             "name": "consultar_info_empresa",
-            "description": "Devuelve información del comercio. Sin parámetros trae TODO (horarios, dirección, pagos, envíos, etc). Con 'campo' trae solo uno específico.",
+            "description": "Info GENERAL del comercio: envíos, formas de pago, teléfono, marcas que trabajan, retiro en local. Sin parámetros trae todo. NO usar para horarios ni servicios (para eso está consultar_config_negocio).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "campo": {
                         "type": "string",
-                        "description": "Opcional. Campo específico a consultar. Ej: 'horario', 'direccion', 'formas_pago', 'envios', 'telefono', 'marcas_principales', 'retiro_en_local'."
+                        "description": "Opcional. Ej: 'formas_pago', 'envios', 'telefono', 'marcas_principales', 'retiro_en_local'."
                     },
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_config_negocio",
+            "description": "HORARIOS de atención, SERVICIOS que hace el comercio (cambio de escobillas, alineación, etc. y qué días), página web, Instagram y qué hace en feriados. Usá SIEMPRE esta para horarios y servicios.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "empresa_id": {
+                        "type": "integer",
+                        "description": "ID del comercio. Tomalo del contexto de la conversación (viene como empresa_id)."
+                    },
+                    "campo": {
+                        "type": "string",
+                        "description": "Opcional. Ej: 'horarios', 'servicios', 'web', 'instagram', 'atiende_feriados'."
+                    },
+                },
+                "required": ["empresa_id"],
             },
         },
     },
@@ -92,11 +122,11 @@ def responder(
                 print(f"  🔧 [iteración {iteracion + 1}] Tool: {tool_name}({tool_args})")
             tools_usadas.append({"nombre": tool_name, "args": tool_args})
 
-            if tool_name not in TOOLS_MAP:
+            if tool_name not in TOOLS_MAP_COMBINADO:
                 tool_result = {"error": f"Tool '{tool_name}' no existe"}
             else:
                 try:
-                    tool_result = TOOLS_MAP[tool_name](**tool_args)
+                    tool_result = TOOLS_MAP_COMBINADO[tool_name](**tool_args)
                 except Exception as e:
                     tool_result = {"error": str(e)}
 
