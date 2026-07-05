@@ -1,7 +1,7 @@
 """
 agents/producto/producto.py
 El agente Producto razona sobre la consulta y decide qué tools usar.
-Hace function calling con GPT-4.1 y conecta las 5 tools del catálogo.
+Hace function calling con GPT-4.1 y conecta las tools del catálogo + las de vehículos.
 """
 from __future__ import annotations
 
@@ -12,11 +12,17 @@ from pathlib import Path
 from openai import OpenAI
 
 from functions.catalog_tools import TOOLS_MAP
+from functions.vehiculo_tools import VEHICULO_TOOLS_MAP
 
 
 # Cargar el prompt del sistema desde el archivo
 _AGENT_DIR = Path(__file__).parent
 _PROMPT = (_AGENT_DIR / "prompt.md").read_text(encoding="utf-8")
+
+
+# Todas las tools que el agente puede EJECUTAR: catalogo + vehiculos.
+# Combinamos los dos mapas sin tocar catalog_tools (que ya anda).
+TOOLS_MAP_COMBINADO = {**TOOLS_MAP, **VEHICULO_TOOLS_MAP}
 
 
 # Definición de las tools en formato OpenAI
@@ -98,6 +104,36 @@ TOOLS_DEF = [
                     "producto_id": {"type": "integer", "description": "ID del producto."},
                 },
                 "required": ["producto_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_versiones_auto",
+            "description": "Muestra las versiones y motores REALES que existen para un auto (marca + modelo), segun el parque automotor argentino. Usala para DESAMBIGUAR cuando el cliente nombra un auto pero NO aclara motor/version y ese modelo tiene varias variantes. Asi podes preguntar con precision ('¿1.6 o 1.4? ¿naftero o diesel?') antes de buscar el repuesto. NO reemplaza a buscar_por_aplicacion: primero desambiguás el auto con esta, despues buscás el repuesto con aquella.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "marca": {"type": "string", "description": "Marca del auto. Podés usar forma corta (VW, Ford) o como la diga el cliente (reno, peugo, bolbagen): la función normaliza sola."},
+                    "modelo": {"type": "string", "description": "Modelo o familia del auto (Gol, Corsa, Kangoo). Opcional pero recomendado."},
+                    "version": {"type": "string", "description": "Versión o motor si el cliente ya lo dijo, para filtrar (1.6, TDI). Opcional."},
+                },
+                "required": ["marca"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_modelos_marca",
+            "description": "Muestra qué modelos tiene una marca. Usala SOLO cuando el cliente nombra una marca pero ningún modelo ('tengo una Renault, ¿qué tenés?').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "marca": {"type": "string", "description": "Marca del auto (forma corta o como la diga el cliente)."},
+                },
+                "required": ["marca"],
             },
         },
     },
@@ -184,12 +220,12 @@ def responder(
 
             tools_usadas.append({"nombre": tool_name, "args": tool_args})
 
-            # Ejecutar la tool
-            if tool_name not in TOOLS_MAP:
+            # Ejecutar la tool (catalogo + vehiculos)
+            if tool_name not in TOOLS_MAP_COMBINADO:
                 tool_result = {"error": f"Tool '{tool_name}' no existe"}
             else:
                 try:
-                    result = TOOLS_MAP[tool_name](**tool_args)
+                    result = TOOLS_MAP_COMBINADO[tool_name](**tool_args)
                     tool_result = result if result is not None else {"sin_resultados": True}
                 except Exception as e:
                     tool_result = {"error": str(e)}
